@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { env } from 'hono/adapter'
+import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import { getSupabase } from './lib/supabase'
 import { classifyPatient, TriageResponses } from './lib/classification'
 import { getLabRecommendations, interpretLabResults, generateRiskProfile } from './lib/lab-recommendations'
@@ -9,11 +10,153 @@ import { generateProtocol } from './lib/protocol-engine'
 type EnvVars = {
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
+  ADMIN_PASSWORD_HASH?: string
 }
 
 const app = new Hono()
 
 app.use('/api/*', cors())
+
+// =====================================================
+// ADMIN AUTH: login, logout, sessie-check
+// =====================================================
+
+// Simpele maar veilige hash-vergelijking via Web Crypto API
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// Genereer een veilig sessie-token
+function generateSessionToken(): string {
+  const array = new Uint8Array(32)
+  crypto.getRandomValues(array)
+  return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+// In-memory sessie store (wordt gereset bij deploy, maar dat is prima — je logt gewoon opnieuw in)
+const activeSessions = new Map<string, { created: number, email: string }>()
+const SESSION_MAX_AGE = 24 * 60 * 60 * 1000 // 24 uur
+
+function cleanExpiredSessions() {
+  const now = Date.now()
+  for (const [token, session] of activeSessions) {
+    if (now - session.created > SESSION_MAX_AGE) {
+      activeSessions.delete(token)
+    }
+  }
+}
+
+// Login API
+app.post('/api/admin/login', async (c) => {
+  const { email, password } = await c.req.json()
+  if (!email || !password) {
+    return c.json({ error: 'Email en wachtwoord zijn verplicht' }, 400)
+  }
+
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = env<EnvVars>(c)
+  
+  // Gebruik Supabase Auth om in te loggen
+  const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify({ email, password })
+  })
+
+  const data = await response.json() as any
+
+  if (!response.ok || !data.access_token) {
+    return c.json({ error: 'Ongeldige inloggegevens' }, 401)
+  }
+
+  // Genereer sessie-token en sla op
+  cleanExpiredSessions()
+  const sessionToken = generateSessionToken()
+  activeSessions.set(sessionToken, { created: Date.now(), email: data.user?.email || email })
+
+  // Zet HttpOnly secure cookie
+  setCookie(c, 'admin_session', sessionToken, {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: 86400 // 24 uur
+  })
+
+  return c.json({ success: true, email: data.user?.email })
+})
+
+// Logout API
+app.post('/api/admin/logout', (c) => {
+  const sessionToken = getCookie(c, 'admin_session')
+  if (sessionToken) {
+    activeSessions.delete(sessionToken)
+  }
+  deleteCookie(c, 'admin_session', { path: '/' })
+  return c.json({ success: true })
+})
+
+// Sessie check API
+app.get('/api/admin/session', (c) => {
+  const sessionToken = getCookie(c, 'admin_session')
+  if (!sessionToken) return c.json({ authenticated: false }, 401)
+  
+  const session = activeSessions.get(sessionToken)
+  if (!session || Date.now() - session.created > SESSION_MAX_AGE) {
+    if (session) activeSessions.delete(sessionToken)
+    deleteCookie(c, 'admin_session', { path: '/' })
+    return c.json({ authenticated: false }, 401)
+  }
+
+  return c.json({ authenticated: true, email: session.email })
+})
+
+// =====================================================
+// ADMIN AUTH MIDDLEWARE — beschermt alle /admin/* pagina's
+// =====================================================
+app.use('/admin/*', async (c, next) => {
+  // Login pagina zelf niet beschermen
+  if (c.req.path === '/admin/login') {
+    return next()
+  }
+
+  const sessionToken = getCookie(c, 'admin_session')
+  if (!sessionToken) {
+    return c.redirect('/admin/login')
+  }
+
+  const session = activeSessions.get(sessionToken)
+  if (!session || Date.now() - session.created > SESSION_MAX_AGE) {
+    if (session) activeSessions.delete(sessionToken)
+    deleteCookie(c, 'admin_session', { path: '/' })
+    return c.redirect('/admin/login')
+  }
+
+  await next()
+})
+
+// Bescherm ook de admin root
+app.use('/admin', async (c, next) => {
+  const sessionToken = getCookie(c, 'admin_session')
+  if (!sessionToken) {
+    return c.redirect('/admin/login')
+  }
+
+  const session = activeSessions.get(sessionToken)
+  if (!session || Date.now() - session.created > SESSION_MAX_AGE) {
+    if (session) activeSessions.delete(sessionToken)
+    deleteCookie(c, 'admin_session', { path: '/' })
+    return c.redirect('/admin/login')
+  }
+
+  await next()
+})
 
 // =====================================================
 // API: PATIENTS
@@ -431,9 +574,140 @@ const navBar = `
       <a href="/admin" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-home mr-1"></i> Dashboard</a>
       <a href="/admin/patients" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-users mr-1"></i> Patiënten</a>
       <a href="/admin/new-patient" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
+      <button onclick="adminLogout()" class="px-3 py-2 rounded hover:bg-red-500/30 text-sm text-white/70 hover:text-white transition" title="Uitloggen"><i class="fas fa-sign-out-alt"></i></button>
     </div>
   </div>
-</nav>`
+</nav>
+<script>
+async function adminLogout() {
+  if (!confirm('Wilt u uitloggen?')) return;
+  await fetch('/api/admin/logout', { method: 'POST' });
+  window.location.href = '/admin/login';
+}
+</script>`
+
+// ADMIN LOGIN PAGE
+app.get('/admin/login', (c) => {
+  return c.html(`<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Login - Weight Loss Assessment</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { 50:'#f5f3ff',100:'#ede9fe',200:'#ddd6fe',300:'#c4b5fd',400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9',800:'#5b21b6',900:'#4c1d95' }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-gradient-to-br from-primary-900 via-primary-800 to-indigo-900 min-h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-md">
+    <div class="text-center mb-8">
+      <div class="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur border border-white/10">
+        <i class="fas fa-shield-alt text-white text-2xl"></i>
+      </div>
+      <h1 class="text-2xl font-bold text-white">Admin Toegang</h1>
+      <p class="text-white/60 text-sm mt-1">Weight Loss Assessment - Marc's Praktijk</p>
+    </div>
+    
+    <div class="bg-white rounded-2xl shadow-2xl p-8">
+      <div id="error-msg" class="hidden bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+        <p class="text-red-700 text-sm font-medium"><i class="fas fa-exclamation-circle mr-1"></i><span id="error-text"></span></p>
+      </div>
+
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-envelope mr-1 text-gray-400"></i>Email</label>
+          <input type="email" id="email" required autocomplete="email"
+            class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition text-gray-800"
+            placeholder="marc@fysiopraktijkzeist.nl">
+        </div>
+
+        <div class="mb-6">
+          <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-lock mr-1 text-gray-400"></i>Wachtwoord</label>
+          <div class="relative">
+            <input type="password" id="password" required autocomplete="current-password"
+              class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition text-gray-800 pr-12"
+              placeholder="••••••••">
+            <button type="button" onclick="togglePassword()" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <i id="eye-icon" class="fas fa-eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="login-btn"
+          class="w-full bg-primary-600 text-white py-3.5 rounded-xl font-bold text-base hover:bg-primary-700 transition shadow-lg shadow-primary-200 flex items-center justify-center gap-2">
+          <i class="fas fa-sign-in-alt"></i>
+          <span>Inloggen</span>
+        </button>
+      </form>
+
+      <div class="mt-6 pt-5 border-t text-center">
+        <a href="/" class="text-sm text-gray-400 hover:text-primary-600 transition">
+          <i class="fas fa-arrow-left mr-1"></i>Terug naar portaal
+        </a>
+      </div>
+    </div>
+
+    <p class="text-center text-white/30 text-xs mt-6"><i class="fas fa-lock mr-1"></i>Beveiligde verbinding (HTTPS)</p>
+  </div>
+
+  <script>
+    function togglePassword() {
+      const pw = document.getElementById('password');
+      const icon = document.getElementById('eye-icon');
+      if (pw.type === 'password') { pw.type = 'text'; icon.className = 'fas fa-eye-slash'; }
+      else { pw.type = 'password'; icon.className = 'fas fa-eye'; }
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      const errDiv = document.getElementById('error-msg');
+      const errText = document.getElementById('error-text');
+      errDiv.classList.add('hidden');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Bezig met inloggen...</span>';
+
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('email').value,
+            password: document.getElementById('password').value
+          })
+        });
+        const data = await res.json();
+
+        if (res.ok) {
+          btn.innerHTML = '<i class="fas fa-check"></i><span>Ingelogd! Even geduld...</span>';
+          btn.className = btn.className.replace('bg-primary-600', 'bg-green-600').replace('hover:bg-primary-700', 'hover:bg-green-700').replace('shadow-primary-200', 'shadow-green-200');
+          setTimeout(() => { window.location.href = '/admin'; }, 500);
+        } else {
+          errText.textContent = data.error || 'Inloggen mislukt';
+          errDiv.classList.remove('hidden');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-sign-in-alt"></i><span>Inloggen</span>';
+        }
+      } catch(err) {
+        errText.textContent = 'Verbindingsfout. Probeer opnieuw.';
+        errDiv.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sign-in-alt"></i><span>Inloggen</span>';
+      }
+    }
+  </script>
+</body></html>`)
+})
 
 // DASHBOARD
 app.get('/admin', (c) => {
