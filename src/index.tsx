@@ -10,7 +10,6 @@ import { generateProtocol } from './lib/protocol-engine'
 type EnvVars = {
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
-  ADMIN_PASSWORD_HASH?: string
 }
 
 const app = new Hono()
@@ -18,40 +17,167 @@ const app = new Hono()
 app.use('/api/*', cors())
 
 // =====================================================
-// ADMIN AUTH: login, logout, sessie-check
+// ADMIN AUTH + 2FA + RATE LIMITING
 // =====================================================
 
-// Simpele maar veilige hash-vergelijking via Web Crypto API
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(password)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-// Genereer een veilig sessie-token
+// --- Crypto helpers ---
 function generateSessionToken(): string {
   const array = new Uint8Array(32)
   crypto.getRandomValues(array)
   return Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-// In-memory sessie store (wordt gereset bij deploy, maar dat is prima — je logt gewoon opnieuw in)
+function generateTOTPSecret(): string {
+  const array = new Uint8Array(20)
+  crypto.getRandomValues(array)
+  return base32Encode(array)
+}
+
+// Base32 encoding voor TOTP secrets
+function base32Encode(data: Uint8Array): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  let bits = ''
+  for (const byte of data) bits += byte.toString(2).padStart(8, '0')
+  let result = ''
+  for (let i = 0; i < bits.length; i += 5) {
+    const chunk = bits.slice(i, i + 5).padEnd(5, '0')
+    result += alphabet[parseInt(chunk, 2)]
+  }
+  return result
+}
+
+function base32Decode(str: string): Uint8Array {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  let bits = ''
+  for (const c of str.toUpperCase()) {
+    const idx = alphabet.indexOf(c)
+    if (idx === -1) continue
+    bits += idx.toString(2).padStart(5, '0')
+  }
+  const bytes = []
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    bytes.push(parseInt(bits.slice(i, i + 8), 2))
+  }
+  return new Uint8Array(bytes)
+}
+
+// HMAC-SHA1 voor TOTP (via Web Crypto API)
+async function hmacSHA1(key: Uint8Array, message: Uint8Array): Promise<Uint8Array> {
+  const cryptoKey = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, message)
+  return new Uint8Array(sig)
+}
+
+// TOTP generatie (RFC 6238)
+async function generateTOTP(secret: string, time?: number): Promise<string> {
+  const key = base32Decode(secret)
+  const epoch = Math.floor((time || Date.now()) / 1000)
+  const counter = Math.floor(epoch / 30)
+  
+  const buffer = new ArrayBuffer(8)
+  const view = new DataView(buffer)
+  view.setUint32(4, counter, false)
+  
+  const hmac = await hmacSHA1(key, new Uint8Array(buffer))
+  const offset = hmac[hmac.length - 1] & 0x0f
+  const code = ((hmac[offset] & 0x7f) << 24 | (hmac[offset+1] & 0xff) << 16 | (hmac[offset+2] & 0xff) << 8 | (hmac[offset+3] & 0xff)) % 1000000
+  
+  return code.toString().padStart(6, '0')
+}
+
+// TOTP verificatie (met ±1 tijdstap tolerantie voor clock drift)
+async function verifyTOTP(secret: string, token: string): Promise<boolean> {
+  const now = Date.now()
+  for (const offset of [-30000, 0, 30000]) {
+    const expected = await generateTOTP(secret, now + offset)
+    if (expected === token) return true
+  }
+  return false
+}
+
+// --- Rate limiting ---
+const loginAttempts = new Map<string, { count: number, firstAttempt: number, blocked: boolean, blockedUntil: number }>()
+const MAX_ATTEMPTS = 5
+const WINDOW_MS = 15 * 60 * 1000   // 15 minuten window
+const BLOCK_MS = 30 * 60 * 1000    // 30 minuten blokkade
+
+function checkRateLimit(ip: string): { allowed: boolean, remaining: number, retryAfter?: number } {
+  const now = Date.now()
+  const entry = loginAttempts.get(ip)
+  
+  if (!entry) {
+    loginAttempts.set(ip, { count: 1, firstAttempt: now, blocked: false, blockedUntil: 0 })
+    return { allowed: true, remaining: MAX_ATTEMPTS - 1 }
+  }
+
+  // Geblokkeerd?
+  if (entry.blocked && now < entry.blockedUntil) {
+    return { allowed: false, remaining: 0, retryAfter: Math.ceil((entry.blockedUntil - now) / 1000) }
+  }
+
+  // Window verlopen? Reset
+  if (now - entry.firstAttempt > WINDOW_MS) {
+    loginAttempts.set(ip, { count: 1, firstAttempt: now, blocked: false, blockedUntil: 0 })
+    return { allowed: true, remaining: MAX_ATTEMPTS - 1 }
+  }
+
+  entry.count++
+  if (entry.count > MAX_ATTEMPTS) {
+    entry.blocked = true
+    entry.blockedUntil = now + BLOCK_MS
+    return { allowed: false, remaining: 0, retryAfter: Math.ceil(BLOCK_MS / 1000) }
+  }
+
+  return { allowed: true, remaining: MAX_ATTEMPTS - entry.count }
+}
+
+function resetRateLimit(ip: string) {
+  loginAttempts.delete(ip)
+}
+
+// --- Session management ---
 const activeSessions = new Map<string, { created: number, email: string }>()
 const SESSION_MAX_AGE = 24 * 60 * 60 * 1000 // 24 uur
 
-function cleanExpiredSessions() {
-  const now = Date.now()
-  for (const [token, session] of activeSessions) {
-    if (now - session.created > SESSION_MAX_AGE) {
-      activeSessions.delete(token)
-    }
+// --- 2FA state: opgeslagen in Supabase user metadata ---
+// Pending 2FA sessions (wachtend op TOTP code na correcte login)
+const pending2FA = new Map<string, { email: string, created: number, supabaseToken: string }>()
+const PENDING_2FA_EXPIRY = 5 * 60 * 1000 // 5 minuten
+
+function isValidSession(sessionToken: string | undefined): boolean {
+  if (!sessionToken) return false
+  const session = activeSessions.get(sessionToken)
+  if (!session) return false
+  if (Date.now() - session.created > SESSION_MAX_AGE) {
+    activeSessions.delete(sessionToken)
+    return false
   }
+  return true
 }
 
-// Login API
+function getClientIP(c: any): string {
+  return c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || 
+         c.req.header('x-real-ip') || 
+         'unknown'
+}
+
+// =====================================================
+// AUTH API ENDPOINTS
+// =====================================================
+
+// Login stap 1: email + wachtwoord
 app.post('/api/admin/login', async (c) => {
+  const ip = getClientIP(c)
+  const rateCheck = checkRateLimit(ip)
+  
+  if (!rateCheck.allowed) {
+    return c.json({ 
+      error: `Te veel inlogpogingen. Probeer opnieuw over ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`,
+      blocked: true,
+      retryAfter: rateCheck.retryAfter
+    }, 429)
+  }
+
   const { email, password } = await c.req.json()
   if (!email || !password) {
     return c.json({ error: 'Email en wachtwoord zijn verplicht' }, 400)
@@ -59,102 +185,239 @@ app.post('/api/admin/login', async (c) => {
 
   const { SUPABASE_URL, SUPABASE_ANON_KEY } = env<EnvVars>(c)
   
-  // Gebruik Supabase Auth om in te loggen
+  // Supabase Auth login
   const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_ANON_KEY,
-    },
+    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
     body: JSON.stringify({ email, password })
   })
 
   const data = await response.json() as any
 
   if (!response.ok || !data.access_token) {
-    return c.json({ error: 'Ongeldige inloggegevens' }, 401)
+    return c.json({ error: 'Ongeldige inloggegevens', remaining: rateCheck.remaining }, 401)
   }
 
-  // Genereer sessie-token en sla op
-  cleanExpiredSessions()
+  // Check of 2FA is ingeschakeld via admin_2fa tabel
+  const db = getSupabase(env<EnvVars>(c))
+  const { data: faData } = await db.from('admin_2fa').select('totp_secret, enabled').eq('email', data.user?.email || email).single()
+  
+  if (faData?.enabled && faData?.totp_secret) {
+    // 2FA is ingeschakeld — maak pending sessie
+    const pendingToken = generateSessionToken()
+    pending2FA.set(pendingToken, { 
+      email: data.user.email, 
+      created: Date.now(),
+      supabaseToken: data.access_token 
+    })
+    
+    return c.json({ 
+      requires_2fa: true, 
+      pending_token: pendingToken,
+      email: data.user.email
+    })
+  }
+
+  // Geen 2FA — direct inloggen
+  resetRateLimit(ip)
   const sessionToken = generateSessionToken()
   activeSessions.set(sessionToken, { created: Date.now(), email: data.user?.email || email })
 
-  // Zet HttpOnly secure cookie
   setCookie(c, 'admin_session', sessionToken, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 86400 // 24 uur
+    httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
   })
 
-  return c.json({ success: true, email: data.user?.email })
+  return c.json({ success: true, email: data.user?.email, has_2fa: false })
 })
 
-// Logout API
+// Login stap 2: 2FA verificatie
+app.post('/api/admin/verify-2fa', async (c) => {
+  const ip = getClientIP(c)
+  const rateCheck = checkRateLimit(ip)
+  if (!rateCheck.allowed) {
+    return c.json({ error: `Te veel pogingen. Wacht ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`, blocked: true }, 429)
+  }
+
+  const { pending_token, totp_code } = await c.req.json()
+  if (!pending_token || !totp_code) {
+    return c.json({ error: 'Token en verificatiecode zijn verplicht' }, 400)
+  }
+
+  const pending = pending2FA.get(pending_token)
+  if (!pending || Date.now() - pending.created > PENDING_2FA_EXPIRY) {
+    if (pending) pending2FA.delete(pending_token)
+    return c.json({ error: 'Sessie verlopen. Log opnieuw in.' }, 401)
+  }
+
+  // Haal TOTP secret op via admin_2fa tabel
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = env<EnvVars>(c)
+  const db = getSupabase(env<EnvVars>(c))
+  const { data: faData } = await db.from('admin_2fa').select('totp_secret').eq('email', pending.email).single()
+  const secret = faData?.totp_secret
+
+  if (!secret) {
+    pending2FA.delete(pending_token)
+    return c.json({ error: '2FA configuratie niet gevonden' }, 500)
+  }
+
+  const valid = await verifyTOTP(secret, totp_code)
+  if (!valid) {
+    return c.json({ error: 'Ongeldige verificatiecode', remaining: rateCheck.remaining }, 401)
+  }
+
+  // 2FA gelukt — sessie aanmaken
+  pending2FA.delete(pending_token)
+  resetRateLimit(ip)
+  const sessionToken = generateSessionToken()
+  activeSessions.set(sessionToken, { created: Date.now(), email: pending.email })
+
+  setCookie(c, 'admin_session', sessionToken, {
+    httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
+  })
+
+  return c.json({ success: true, email: pending.email })
+})
+
+// 2FA Setup: genereer secret + QR URL
+app.post('/api/admin/2fa/setup', async (c) => {
+  const sessionToken = getCookie(c, 'admin_session')
+  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
+  
+  const session = activeSessions.get(sessionToken!)
+  const secret = generateTOTPSecret()
+  const otpauthUrl = `otpauth://totp/GripOpGewicht:${encodeURIComponent(session!.email)}?secret=${secret}&issuer=GripOpGewicht&digits=6&period=30`
+  
+  return c.json({ secret, otpauth_url: otpauthUrl, email: session!.email })
+})
+
+// 2FA Activeren: verificeer code en sla secret op
+app.post('/api/admin/2fa/enable', async (c) => {
+  const sessionToken = getCookie(c, 'admin_session')
+  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
+  
+  const { secret, totp_code } = await c.req.json()
+  if (!secret || !totp_code) return c.json({ error: 'Secret en code zijn verplicht' }, 400)
+
+  const valid = await verifyTOTP(secret, totp_code)
+  if (!valid) return c.json({ error: 'Ongeldige code. Probeer opnieuw.' }, 400)
+
+  // Sla secret op in Supabase user metadata
+  const session = activeSessions.get(sessionToken!)
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = env<EnvVars>(c)
+  
+  // Login opnieuw om een vers token te krijgen (we hebben het wachtwoord niet meer)
+  // Gebruik de admin API via service role — maar we hebben alleen anon key
+  // Alternatief: sla op in een aparte tabel
+  const db = getSupabase(env<EnvVars>(c))
+  await db.from('admin_2fa').upsert({ 
+    email: session!.email, 
+    totp_secret: secret, 
+    enabled: true,
+    created_at: new Date().toISOString()
+  }, { onConflict: 'email' })
+
+  return c.json({ success: true, message: '2FA is geactiveerd!' })
+})
+
+// 2FA Uitschakelen
+app.post('/api/admin/2fa/disable', async (c) => {
+  const sessionToken = getCookie(c, 'admin_session')
+  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
+  
+  const { totp_code } = await c.req.json()
+  const session = activeSessions.get(sessionToken!)
+  
+  // Verifieer huidige 2FA code voordat we uitschakelen
+  const db = getSupabase(env<EnvVars>(c))
+  const { data: fa } = await db.from('admin_2fa').select('totp_secret').eq('email', session!.email).single()
+  
+  if (fa?.totp_secret) {
+    const valid = await verifyTOTP(fa.totp_secret, totp_code)
+    if (!valid) return c.json({ error: 'Ongeldige verificatiecode' }, 401)
+  }
+
+  await db.from('admin_2fa').delete().eq('email', session!.email)
+  return c.json({ success: true, message: '2FA is uitgeschakeld' })
+})
+
+// 2FA Status check
+app.get('/api/admin/2fa/status', async (c) => {
+  const sessionToken = getCookie(c, 'admin_session')
+  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
+  
+  const session = activeSessions.get(sessionToken!)
+  const db = getSupabase(env<EnvVars>(c))
+  const { data } = await db.from('admin_2fa').select('enabled').eq('email', session!.email).single()
+  
+  return c.json({ enabled: !!data?.enabled })
+})
+
+// Logout
 app.post('/api/admin/logout', (c) => {
   const sessionToken = getCookie(c, 'admin_session')
-  if (sessionToken) {
-    activeSessions.delete(sessionToken)
-  }
+  if (sessionToken) activeSessions.delete(sessionToken)
   deleteCookie(c, 'admin_session', { path: '/' })
   return c.json({ success: true })
 })
 
-// Sessie check API
+// Sessie check
 app.get('/api/admin/session', (c) => {
   const sessionToken = getCookie(c, 'admin_session')
-  if (!sessionToken) return c.json({ authenticated: false }, 401)
-  
-  const session = activeSessions.get(sessionToken)
-  if (!session || Date.now() - session.created > SESSION_MAX_AGE) {
-    if (session) activeSessions.delete(sessionToken)
+  if (!isValidSession(sessionToken)) {
     deleteCookie(c, 'admin_session', { path: '/' })
     return c.json({ authenticated: false }, 401)
   }
-
-  return c.json({ authenticated: true, email: session.email })
+  const session = activeSessions.get(sessionToken!)
+  return c.json({ authenticated: true, email: session!.email })
 })
 
 // =====================================================
-// ADMIN AUTH MIDDLEWARE — beschermt alle /admin/* pagina's
+// AUTH MIDDLEWARE — beschermt /admin/* pagina's EN /api/* data routes
 // =====================================================
-app.use('/admin/*', async (c, next) => {
-  // Login pagina zelf niet beschermen
-  if (c.req.path === '/admin/login') {
-    return next()
-  }
 
+// Helper: check of request een geldige admin sessie heeft
+function requireAdminSession(c: any): boolean {
   const sessionToken = getCookie(c, 'admin_session')
-  if (!sessionToken) {
-    return c.redirect('/admin/login')
-  }
+  return isValidSession(sessionToken)
+}
 
-  const session = activeSessions.get(sessionToken)
-  if (!session || Date.now() - session.created > SESSION_MAX_AGE) {
-    if (session) activeSessions.delete(sessionToken)
+// Bescherm admin pagina's (redirect naar login)
+app.use('/admin/*', async (c, next) => {
+  if (c.req.path === '/admin/login') return next()
+  
+  if (!requireAdminSession(c)) {
     deleteCookie(c, 'admin_session', { path: '/' })
     return c.redirect('/admin/login')
   }
-
   await next()
 })
 
-// Bescherm ook de admin root
 app.use('/admin', async (c, next) => {
-  const sessionToken = getCookie(c, 'admin_session')
-  if (!sessionToken) {
-    return c.redirect('/admin/login')
-  }
-
-  const session = activeSessions.get(sessionToken)
-  if (!session || Date.now() - session.created > SESSION_MAX_AGE) {
-    if (session) activeSessions.delete(sessionToken)
+  if (!requireAdminSession(c)) {
     deleteCookie(c, 'admin_session', { path: '/' })
     return c.redirect('/admin/login')
   }
+  await next()
+})
 
+// Bescherm ALLE data API routes (return 401 JSON)
+// Uitzondering: admin auth endpoints en portal endpoints
+app.use('/api/*', async (c, next) => {
+  const path = c.req.path
+  
+  // Deze endpoints zijn publiek (portal + auth)
+  if (path.startsWith('/api/admin/login') ||
+      path.startsWith('/api/admin/verify-2fa') ||
+      path.startsWith('/api/admin/logout') ||
+      path.startsWith('/api/portal/')) {
+    return next()
+  }
+
+  // Alle andere API routes vereisen admin sessie
+  if (!requireAdminSession(c)) {
+    return c.json({ error: 'Niet geautoriseerd. Log in via /admin/login' }, 401)
+  }
+  
   await next()
 })
 
@@ -574,6 +837,7 @@ const navBar = `
       <a href="/admin" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-home mr-1"></i> Dashboard</a>
       <a href="/admin/patients" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-users mr-1"></i> Patiënten</a>
       <a href="/admin/new-patient" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
+      <a href="/admin/beveiliging" class="px-3 py-2 rounded hover:bg-white/10 text-sm" title="Beveiliging"><i class="fas fa-shield-alt"></i></a>
       <button onclick="adminLogout()" class="px-3 py-2 rounded hover:bg-red-500/30 text-sm text-white/70 hover:text-white transition" title="Uitloggen"><i class="fas fa-sign-out-alt"></i></button>
     </div>
   </div>
@@ -623,6 +887,7 @@ app.get('/admin/login', (c) => {
         <p class="text-red-700 text-sm font-medium"><i class="fas fa-exclamation-circle mr-1"></i><span id="error-text"></span></p>
       </div>
 
+      <!-- Stap 1: Email + Wachtwoord -->
       <form id="login-form" onsubmit="handleLogin(event)">
         <div class="mb-5">
           <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-envelope mr-1 text-gray-400"></i>Email</label>
@@ -650,6 +915,39 @@ app.get('/admin/login', (c) => {
         </button>
       </form>
 
+      <!-- Stap 2: 2FA Verificatie (verborgen tot nodig) -->
+      <div id="totp-form" class="hidden">
+        <div class="text-center mb-6">
+          <div class="w-14 h-14 bg-primary-100 rounded-xl flex items-center justify-center mx-auto mb-3">
+            <i class="fas fa-shield-alt text-primary-600 text-xl"></i>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800">Twee-factor authenticatie</h3>
+          <p class="text-sm text-gray-500 mt-1">Voer de 6-cijferige code in van je authenticator app</p>
+        </div>
+
+        <div class="mb-6">
+          <div class="flex justify-center gap-2" id="totp-inputs">
+            <input type="text" maxlength="1" class="totp-digit w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-gray-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none transition" data-idx="0">
+            <input type="text" maxlength="1" class="totp-digit w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-gray-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none transition" data-idx="1">
+            <input type="text" maxlength="1" class="totp-digit w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-gray-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none transition" data-idx="2">
+            <span class="flex items-center text-gray-300 text-xl font-light">-</span>
+            <input type="text" maxlength="1" class="totp-digit w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-gray-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none transition" data-idx="3">
+            <input type="text" maxlength="1" class="totp-digit w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-gray-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none transition" data-idx="4">
+            <input type="text" maxlength="1" class="totp-digit w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-gray-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none transition" data-idx="5">
+          </div>
+        </div>
+
+        <button type="button" id="verify-btn" onclick="handleVerify2FA()"
+          class="w-full bg-primary-600 text-white py-3.5 rounded-xl font-bold text-base hover:bg-primary-700 transition shadow-lg shadow-primary-200 flex items-center justify-center gap-2">
+          <i class="fas fa-check-double"></i>
+          <span>Verifieer</span>
+        </button>
+
+        <button type="button" onclick="backToLogin()" class="w-full mt-3 py-2.5 text-sm text-gray-500 hover:text-primary-600 transition">
+          <i class="fas fa-arrow-left mr-1"></i>Terug naar inloggen
+        </button>
+      </div>
+
       <div class="mt-6 pt-5 border-t text-center">
         <a href="/" class="text-sm text-gray-400 hover:text-primary-600 transition">
           <i class="fas fa-arrow-left mr-1"></i>Terug naar portaal
@@ -660,7 +958,14 @@ app.get('/admin/login', (c) => {
     <p class="text-center text-white/30 text-xs mt-6"><i class="fas fa-lock mr-1"></i>Beveiligde verbinding (HTTPS)</p>
   </div>
 
+  <style>
+    .totp-digit::-webkit-outer-spin-button,
+    .totp-digit::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  </style>
+
   <script>
+    let pendingToken = null;
+
     function togglePassword() {
       const pw = document.getElementById('password');
       const icon = document.getElementById('eye-icon');
@@ -668,12 +973,61 @@ app.get('/admin/login', (c) => {
       else { pw.type = 'password'; icon.className = 'fas fa-eye'; }
     }
 
+    function showError(msg) {
+      const errDiv = document.getElementById('error-msg');
+      document.getElementById('error-text').textContent = msg;
+      errDiv.classList.remove('hidden');
+    }
+
+    function hideError() {
+      document.getElementById('error-msg').classList.add('hidden');
+    }
+
+    function show2FAForm() {
+      document.getElementById('login-form').classList.add('hidden');
+      document.getElementById('totp-form').classList.remove('hidden');
+      // Focus eerste digit
+      setTimeout(() => document.querySelector('.totp-digit').focus(), 100);
+    }
+
+    function backToLogin() {
+      pendingToken = null;
+      document.getElementById('totp-form').classList.add('hidden');
+      document.getElementById('login-form').classList.remove('hidden');
+      hideError();
+      // Reset TOTP velden
+      document.querySelectorAll('.totp-digit').forEach(d => d.value = '');
+      const btn = document.getElementById('login-btn');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-sign-in-alt"></i><span>Inloggen</span>';
+    }
+
+    // TOTP digit navigatie
+    document.querySelectorAll('.totp-digit').forEach((input, idx, all) => {
+      input.addEventListener('input', (e) => {
+        e.target.value = e.target.value.replace(/[^0-9]/g, '');
+        if (e.target.value && idx < all.length - 1) all[idx + 1].focus();
+        // Auto-submit als alle 6 ingevuld
+        const code = Array.from(all).map(d => d.value).join('');
+        if (code.length === 6) handleVerify2FA();
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !e.target.value && idx > 0) all[idx - 1].focus();
+      });
+      // Plakken ondersteuning
+      input.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const pasted = (e.clipboardData.getData('text') || '').replace(/[^0-9]/g, '').slice(0, 6);
+        pasted.split('').forEach((ch, i) => { if (all[i]) all[i].value = ch; });
+        if (pasted.length === 6) handleVerify2FA();
+        else if (all[pasted.length]) all[pasted.length].focus();
+      });
+    });
+
     async function handleLogin(e) {
       e.preventDefault();
+      hideError();
       const btn = document.getElementById('login-btn');
-      const errDiv = document.getElementById('error-msg');
-      const errText = document.getElementById('error-text');
-      errDiv.classList.add('hidden');
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Bezig met inloggen...</span>';
 
@@ -688,23 +1042,352 @@ app.get('/admin/login', (c) => {
         });
         const data = await res.json();
 
-        if (res.ok) {
+        if (res.ok && data.requires_2fa) {
+          // 2FA vereist — toon TOTP invoer
+          pendingToken = data.pending_token;
+          show2FAForm();
+          return;
+        }
+
+        if (res.ok && data.success) {
           btn.innerHTML = '<i class="fas fa-check"></i><span>Ingelogd! Even geduld...</span>';
           btn.className = btn.className.replace('bg-primary-600', 'bg-green-600').replace('hover:bg-primary-700', 'hover:bg-green-700').replace('shadow-primary-200', 'shadow-green-200');
           setTimeout(() => { window.location.href = '/admin'; }, 500);
         } else {
-          errText.textContent = data.error || 'Inloggen mislukt';
-          errDiv.classList.remove('hidden');
+          showError(data.error || 'Inloggen mislukt');
           btn.disabled = false;
           btn.innerHTML = '<i class="fas fa-sign-in-alt"></i><span>Inloggen</span>';
         }
       } catch(err) {
-        errText.textContent = 'Verbindingsfout. Probeer opnieuw.';
-        errDiv.classList.remove('hidden');
+        showError('Verbindingsfout. Probeer opnieuw.');
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-sign-in-alt"></i><span>Inloggen</span>';
       }
     }
+
+    async function handleVerify2FA() {
+      hideError();
+      const code = Array.from(document.querySelectorAll('.totp-digit')).map(d => d.value).join('');
+      if (code.length !== 6) { showError('Voer alle 6 cijfers in'); return; }
+
+      const btn = document.getElementById('verify-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Verifiëren...</span>';
+
+      try {
+        const res = await fetch('/api/admin/verify-2fa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pending_token: pendingToken, totp_code: code })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          btn.innerHTML = '<i class="fas fa-check"></i><span>Geverifieerd!</span>';
+          btn.className = btn.className.replace('bg-primary-600', 'bg-green-600').replace('hover:bg-primary-700', 'hover:bg-green-700').replace('shadow-primary-200', 'shadow-green-200');
+          setTimeout(() => { window.location.href = '/admin'; }, 500);
+        } else {
+          showError(data.error || 'Verificatie mislukt');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-check-double"></i><span>Verifieer</span>';
+          // Reset velden
+          document.querySelectorAll('.totp-digit').forEach(d => d.value = '');
+          document.querySelector('.totp-digit').focus();
+        }
+      } catch(err) {
+        showError('Verbindingsfout. Probeer opnieuw.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-check-double"></i><span>Verifieer</span>';
+      }
+    }
+  </script>
+</body></html>`)
+})
+
+// BEVEILIGING / 2FA INSTELLINGEN
+app.get('/admin/beveiliging', (c) => {
+  return c.html(`${htmlHead}
+<body class="bg-gray-50 min-h-screen">
+  ${navBar}
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <div class="mb-8">
+      <a href="/admin" class="text-primary-600 hover:underline text-sm mb-2 inline-block"><i class="fas fa-arrow-left mr-1"></i>Terug naar dashboard</a>
+      <h2 class="text-2xl font-bold text-gray-800"><i class="fas fa-shield-alt mr-2 text-primary-600"></i>Beveiliging</h2>
+      <p class="text-gray-500">Beheer twee-factor authenticatie en beveiligingsinstellingen</p>
+    </div>
+
+    <div id="loading" class="text-center py-12">
+      <i class="fas fa-spinner fa-spin text-3xl text-primary-500"></i>
+      <p class="text-gray-500 mt-3">Laden...</p>
+    </div>
+
+    <!-- 2FA Status -->
+    <div id="security-content" class="hidden space-y-6">
+      
+      <!-- 2FA Status Card -->
+      <div class="bg-white rounded-2xl shadow-sm border p-6">
+        <div class="flex items-start justify-between">
+          <div>
+            <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-mobile-alt mr-2"></i>Twee-factor authenticatie (2FA)</h3>
+            <p class="text-sm text-gray-500 mt-1">Gebruik een authenticator app (Google Authenticator, Authy, 1Password) als extra beveiligingslaag bij het inloggen.</p>
+          </div>
+          <span id="2fa-badge" class="px-3 py-1 rounded-full text-xs font-bold"></span>
+        </div>
+
+        <div id="2fa-enabled-info" class="hidden mt-4 p-4 bg-green-50 border border-green-200 rounded-xl">
+          <div class="flex items-center gap-2 text-green-700">
+            <i class="fas fa-check-circle text-lg"></i>
+            <span class="font-semibold">2FA is actief</span>
+          </div>
+          <p class="text-green-600 text-sm mt-1">Je account is extra beveiligd. Bij elke login wordt een 6-cijferige code gevraagd.</p>
+          <button onclick="disable2FAStart()" class="mt-4 px-5 py-2.5 bg-red-600 text-white rounded-xl text-sm font-semibold hover:bg-red-700 transition">
+            <i class="fas fa-times-circle mr-1"></i>2FA uitschakelen
+          </button>
+        </div>
+
+        <div id="2fa-disabled-info" class="hidden mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+          <div class="flex items-center gap-2 text-yellow-700">
+            <i class="fas fa-exclamation-triangle text-lg"></i>
+            <span class="font-semibold">2FA is niet actief</span>
+          </div>
+          <p class="text-yellow-600 text-sm mt-1">Je account is alleen beveiligd met een wachtwoord. Schakel 2FA in voor extra bescherming van patiëntgegevens.</p>
+          <button onclick="setup2FAStart()" class="mt-4 px-5 py-2.5 bg-primary-600 text-white rounded-xl text-sm font-semibold hover:bg-primary-700 transition">
+            <i class="fas fa-shield-alt mr-1"></i>2FA inschakelen
+          </button>
+        </div>
+      </div>
+
+      <!-- 2FA Setup Wizard (verborgen tot nodig) -->
+      <div id="setup-wizard" class="hidden bg-white rounded-2xl shadow-sm border p-6">
+        <h3 class="text-lg font-bold text-gray-800 mb-4"><i class="fas fa-cog mr-2 text-primary-600"></i>2FA Instellen</h3>
+        
+        <!-- Stap 1: QR Code -->
+        <div id="setup-step1">
+          <div class="bg-gray-50 rounded-xl p-6 text-center">
+            <p class="text-sm text-gray-600 mb-4">Scan deze QR-code met je authenticator app:</p>
+            <div id="qr-container" class="inline-block bg-white p-4 rounded-xl shadow-inner mb-4">
+              <img id="qr-image" class="w-48 h-48" alt="QR Code">
+            </div>
+            <div class="mt-3">
+              <p class="text-xs text-gray-400 mb-1">Of voer deze code handmatig in:</p>
+              <div class="flex items-center justify-center gap-2">
+                <code id="manual-secret" class="bg-gray-100 px-3 py-1.5 rounded-lg text-sm font-mono font-bold text-gray-700 select-all"></code>
+                <button onclick="copySecret()" class="text-primary-600 hover:text-primary-700" title="Kopieer">
+                  <i class="fas fa-copy"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mt-6">
+            <p class="text-sm font-semibold text-gray-700 mb-2">Voer de 6-cijferige code in ter bevestiging:</p>
+            <div class="flex items-center gap-3">
+              <input type="text" id="setup-code" maxlength="6" pattern="[0-9]{6}" inputmode="numeric"
+                class="w-40 px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 outline-none text-center text-xl font-bold tracking-widest"
+                placeholder="000000">
+              <button onclick="activate2FA()" id="activate-btn"
+                class="px-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 transition flex items-center gap-2">
+                <i class="fas fa-check"></i>Activeer
+              </button>
+            </div>
+          </div>
+
+          <button onclick="cancelSetup()" class="mt-4 text-sm text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times mr-1"></i>Annuleren
+          </button>
+        </div>
+      </div>
+
+      <!-- Disable 2FA Dialog (verborgen tot nodig) -->
+      <div id="disable-dialog" class="hidden bg-white rounded-2xl shadow-sm border p-6">
+        <h3 class="text-lg font-bold text-red-600 mb-2"><i class="fas fa-exclamation-triangle mr-2"></i>2FA Uitschakelen</h3>
+        <p class="text-sm text-gray-600 mb-4">Voer je huidige authenticator code in om 2FA uit te schakelen. Dit maakt je account kwetsbaarder.</p>
+        <div class="flex items-center gap-3">
+          <input type="text" id="disable-code" maxlength="6" pattern="[0-9]{6}" inputmode="numeric"
+            class="w-40 px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-red-500 focus:ring-2 focus:ring-red-200 outline-none text-center text-xl font-bold tracking-widest"
+            placeholder="000000">
+          <button onclick="disable2FAConfirm()" id="disable-btn"
+            class="px-6 py-3 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-700 transition flex items-center gap-2">
+            <i class="fas fa-times-circle"></i>Uitschakelen
+          </button>
+        </div>
+        <button onclick="cancelDisable()" class="mt-4 text-sm text-gray-400 hover:text-gray-600">
+          <i class="fas fa-arrow-left mr-1"></i>Annuleren
+        </button>
+      </div>
+
+      <!-- Beveiligingstips -->
+      <div class="bg-blue-50 border border-blue-200 rounded-2xl p-6">
+        <h3 class="text-sm font-bold text-blue-800 mb-3"><i class="fas fa-info-circle mr-1"></i>Beveiligingstips voor patiëntgegevens</h3>
+        <ul class="text-sm text-blue-700 space-y-2">
+          <li><i class="fas fa-check text-blue-500 mr-2 w-4"></i>Gebruik een sterk, uniek wachtwoord van minimaal 12 tekens</li>
+          <li><i class="fas fa-check text-blue-500 mr-2 w-4"></i>Schakel 2FA in voor extra bescherming (verplicht aanbevolen bij medische data)</li>
+          <li><i class="fas fa-check text-blue-500 mr-2 w-4"></i>Log altijd uit na gebruik, vooral op gedeelde apparaten</li>
+          <li><i class="fas fa-check text-blue-500 mr-2 w-4"></i>Deel je inloggegevens nooit met anderen</li>
+          <li><i class="fas fa-check text-blue-500 mr-2 w-4"></i>Bewaar je authenticator backup-codes op een veilige plek</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Success/Error Messages -->
+    <div id="msg-success" class="hidden fixed top-6 right-6 bg-green-600 text-white px-6 py-3 rounded-xl shadow-lg z-50 flex items-center gap-2">
+      <i class="fas fa-check-circle"></i><span id="msg-success-text"></span>
+    </div>
+    <div id="msg-error" class="hidden fixed top-6 right-6 bg-red-600 text-white px-6 py-3 rounded-xl shadow-lg z-50 flex items-center gap-2">
+      <i class="fas fa-exclamation-circle"></i><span id="msg-error-text"></span>
+    </div>
+  </main>
+
+  <script>
+    let currentSecret = null;
+
+    function showMsg(type, text) {
+      const el = document.getElementById('msg-' + type);
+      document.getElementById('msg-' + type + '-text').textContent = text;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    async function load2FAStatus() {
+      try {
+        const res = await fetch('/api/admin/2fa/status');
+        if (res.status === 401) { window.location.href = '/admin/login'; return; }
+        const data = await res.json();
+        
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('security-content').classList.remove('hidden');
+
+        if (data.enabled) {
+          document.getElementById('2fa-badge').textContent = 'ACTIEF';
+          document.getElementById('2fa-badge').className = 'px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700';
+          document.getElementById('2fa-enabled-info').classList.remove('hidden');
+          document.getElementById('2fa-disabled-info').classList.add('hidden');
+        } else {
+          document.getElementById('2fa-badge').textContent = 'NIET ACTIEF';
+          document.getElementById('2fa-badge').className = 'px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700';
+          document.getElementById('2fa-enabled-info').classList.add('hidden');
+          document.getElementById('2fa-disabled-info').classList.remove('hidden');
+        }
+      } catch(e) {
+        document.getElementById('loading').innerHTML = '<p class="text-red-500">Fout bij laden. <a href="/admin/beveiliging" class="underline">Herlaad</a></p>';
+      }
+    }
+
+    async function setup2FAStart() {
+      try {
+        const res = await fetch('/api/admin/2fa/setup', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) { showMsg('error', data.error || 'Fout'); return; }
+
+        currentSecret = data.secret;
+        document.getElementById('manual-secret').textContent = data.secret;
+        
+        // QR code genereren via externe API
+        const qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(data.otpauth_url);
+        document.getElementById('qr-image').src = qrUrl;
+
+        document.getElementById('2fa-disabled-info').classList.add('hidden');
+        document.getElementById('setup-wizard').classList.remove('hidden');
+      } catch(e) {
+        showMsg('error', 'Verbindingsfout');
+      }
+    }
+
+    function copySecret() {
+      navigator.clipboard.writeText(currentSecret);
+      showMsg('success', 'Code gekopieerd!');
+    }
+
+    function cancelSetup() {
+      currentSecret = null;
+      document.getElementById('setup-wizard').classList.add('hidden');
+      document.getElementById('setup-code').value = '';
+      load2FAStatus();
+    }
+
+    async function activate2FA() {
+      const code = document.getElementById('setup-code').value.trim();
+      if (code.length !== 6 || !/^[0-9]{6}$/.test(code)) {
+        showMsg('error', 'Voer een geldige 6-cijferige code in'); return;
+      }
+
+      const btn = document.getElementById('activate-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>Bezig...';
+
+      try {
+        const res = await fetch('/api/admin/2fa/enable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ secret: currentSecret, totp_code: code })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          showMsg('success', '2FA is succesvol geactiveerd!');
+          currentSecret = null;
+          document.getElementById('setup-wizard').classList.add('hidden');
+          document.getElementById('setup-code').value = '';
+          load2FAStatus();
+        } else {
+          showMsg('error', data.error || 'Activering mislukt');
+        }
+      } catch(e) {
+        showMsg('error', 'Verbindingsfout');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-check"></i>Activeer';
+    }
+
+    function disable2FAStart() {
+      document.getElementById('2fa-enabled-info').classList.add('hidden');
+      document.getElementById('disable-dialog').classList.remove('hidden');
+    }
+
+    function cancelDisable() {
+      document.getElementById('disable-dialog').classList.add('hidden');
+      document.getElementById('disable-code').value = '';
+      load2FAStatus();
+    }
+
+    async function disable2FAConfirm() {
+      const code = document.getElementById('disable-code').value.trim();
+      if (code.length !== 6 || !/^[0-9]{6}$/.test(code)) {
+        showMsg('error', 'Voer een geldige 6-cijferige code in'); return;
+      }
+
+      const btn = document.getElementById('disable-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>Bezig...';
+
+      try {
+        const res = await fetch('/api/admin/2fa/disable', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ totp_code: code })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          showMsg('success', '2FA is uitgeschakeld');
+          document.getElementById('disable-dialog').classList.add('hidden');
+          document.getElementById('disable-code').value = '';
+          load2FAStatus();
+        } else {
+          showMsg('error', data.error || 'Uitschakelen mislukt');
+        }
+      } catch(e) {
+        showMsg('error', 'Verbindingsfout');
+      }
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-times-circle"></i>Uitschakelen';
+    }
+
+    // Enter key handlers
+    document.getElementById('setup-code').addEventListener('keypress', (e) => { if (e.key === 'Enter') activate2FA(); });
+    document.getElementById('disable-code').addEventListener('keypress', (e) => { if (e.key === 'Enter') disable2FAConfirm(); });
+
+    load2FAStatus();
   </script>
 </body></html>`)
 })
