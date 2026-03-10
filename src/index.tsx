@@ -256,11 +256,15 @@ app.get('/api/protocols/:patientId', async (c) => {
 })
 
 // =====================================================
-// API: PROGRESS TRACKING
+// API: PROGRESS TRACKING (with symptom scores)
 // =====================================================
 app.post('/api/progress', async (c) => {
   const db = getSupabase(c.env)
   const body = await c.req.json()
+  // Ensure symptoms is a proper JSONB object
+  if (body.symptoms && typeof body.symptoms === 'object') {
+    body.symptoms = body.symptoms
+  }
   const { data, error } = await db
     .from('progress_tracking')
     .insert([body])
@@ -279,6 +283,55 @@ app.get('/api/progress/:patientId', async (c) => {
     .order('measurement_date', { ascending: true })
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
+})
+
+// =====================================================
+// API: FOLLOW-UPS
+// =====================================================
+app.get('/api/follow-ups/:patientId', async (c) => {
+  const db = getSupabase(c.env)
+  const { data, error } = await db
+    .from('follow_ups')
+    .select('*')
+    .eq('patient_id', c.req.param('patientId'))
+    .order('scheduled_date', { ascending: true })
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
+app.post('/api/follow-ups', async (c) => {
+  const db = getSupabase(c.env)
+  const body = await c.req.json()
+  const { data, error } = await db
+    .from('follow_ups')
+    .insert([body])
+    .select()
+    .single()
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data, 201)
+})
+
+app.patch('/api/follow-ups/:id', async (c) => {
+  const db = getSupabase(c.env)
+  const body = await c.req.json()
+  const { data, error } = await db
+    .from('follow_ups')
+    .update(body)
+    .eq('id', c.req.param('id'))
+    .select()
+    .single()
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
+app.delete('/api/follow-ups/:id', async (c) => {
+  const db = getSupabase(c.env)
+  const { error } = await db
+    .from('follow_ups')
+    .delete()
+    .eq('id', c.req.param('id'))
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ success: true })
 })
 
 // =====================================================
@@ -947,7 +1000,7 @@ app.get('/results/:patientId/:assessmentId', (c) => {
 </body></html>`)
 })
 
-// PATIENT PROFILE PAGE
+// PATIENT PROFILE PAGE - Extended with symptom scores, charts, lab trends, follow-ups
 app.get('/patient/:id', (c) => {
   const patientId = c.req.param('id')
   return c.html(`${htmlHead}
@@ -961,11 +1014,26 @@ app.get('/patient/:id', (c) => {
     const patientId = '${patientId}';
     const categoryNames = {metabolic_resistance:'Metabole Weerstand',thyroid:'Schildklier',hormonal:'PCOS/Hormonen',cortisol:'Cortisol',insulin:'Insuline',medication:'Medicatie',standard:'Standaard'};
     const catColors = {metabolic_resistance:'bg-red-100 text-red-700',thyroid:'bg-indigo-100 text-indigo-700',hormonal:'bg-pink-100 text-pink-700',cortisol:'bg-orange-100 text-orange-700',insulin:'bg-red-100 text-red-700',medication:'bg-blue-100 text-blue-700',standard:'bg-green-100 text-green-700'};
+    const symptomLabels = {fatigue:'Vermoeidheid',sleep:'Slaapkwaliteit',digestion:'Spijsvertering',mood:'Stemming',pain:'Pijn',concentration:'Concentratie',hunger:'Hongergevoel'};
+    const symptomIcons = {fatigue:'fa-battery-half',sleep:'fa-moon',digestion:'fa-stomach',mood:'fa-smile',pain:'fa-bolt',concentration:'fa-brain',hunger:'fa-utensils'};
+    const symptomColors = {fatigue:'#ef4444',sleep:'#8b5cf6',digestion:'#f59e0b',mood:'#10b981',pain:'#ec4899',concentration:'#3b82f6',hunger:'#f97316'};
+
+    let patientData = null;
+    let progressData = [];
+    let followUpsData = [];
 
     async function loadProfile() {
       try {
-        const res = await fetch('/api/patients/'+patientId);
-        const p = await res.json();
+        const [patientRes, progressRes, followUpsRes] = await Promise.all([
+          fetch('/api/patients/'+patientId),
+          fetch('/api/progress/'+patientId),
+          fetch('/api/follow-ups/'+patientId).catch(()=>({ok:false}))
+        ]);
+        patientData = await patientRes.json();
+        progressData = await progressRes.json();
+        try { followUpsData = followUpsRes.ok ? await followUpsRes.json() : []; } catch(e) { followUpsData = []; }
+
+        const p = patientData;
         const age = p.date_of_birth ? Math.floor((Date.now()-new Date(p.date_of_birth).getTime())/31557600000) : '-';
         const genderLabel = {male:'Man',female:'Vrouw',other:'Anders'}[p.gender] || '-';
         const lastAssessment = (p.assessments||[]).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
@@ -998,23 +1066,51 @@ app.get('/patient/:id', (c) => {
         // Tabs content
         html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">';
 
-        // Lab Tests
+        // Lab Tests with trend arrows & range bars
         const labs = (p.lab_tests||[]).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
         html += '<div class="bg-white rounded-xl shadow"><div class="p-4 border-b"><h3 class="font-bold text-lg"><i class="fas fa-flask mr-2 text-blue-600"></i>Lab-testen</h3></div><div class="p-4">';
         if (!labs.length) { html += '<p class="text-gray-400 text-center py-4">Geen lab-testen</p>'; }
         else {
+          const completedLabs = labs.filter(l=>l.status==='completed' && l.interpretations?.length);
           labs.forEach(lab => {
             const statusBadge = {recommended:'bg-yellow-100 text-yellow-700',ordered:'bg-blue-100 text-blue-700',completed:'bg-green-100 text-green-700'}[lab.status]||'bg-gray-100';
             const statusLabel = {recommended:'Aanbevolen',ordered:'Aangevraagd',completed:'Voltooid'}[lab.status]||lab.status;
-            html += '<div class="border rounded-lg p-3 mb-3"><div class="flex items-center justify-between mb-2"><span class="font-semibold text-sm">'+lab.test_package+'</span><span class="px-2 py-1 rounded-full text-xs font-semibold '+statusBadge+'">'+statusLabel+'</span></div>';
+            html += '<div class="border rounded-lg p-3 mb-3"><div class="flex items-center justify-between mb-2"><span class="font-semibold text-sm">'+lab.test_package+'</span><div class="flex items-center gap-2"><span class="text-xs text-gray-400">'+new Date(lab.created_at).toLocaleDateString('nl-NL')+'</span><span class="px-2 py-1 rounded-full text-xs font-semibold '+statusBadge+'">'+statusLabel+'</span></div></div>';
             if (lab.status === 'recommended' || lab.status === 'ordered') {
               html += '<a href="/lab-entry/'+patientId+'/'+lab.id+'" class="text-sm text-blue-600 hover:text-blue-800 font-semibold"><i class="fas fa-edit mr-1"></i>Resultaten invoeren</a>';
             }
             if (lab.status === 'completed' && lab.interpretations?.length) {
-              html += '<div class="mt-2 space-y-1">';
+              html += '<div class="mt-2 space-y-2">';
               lab.interpretations.forEach(interp => {
                 const statusIcon = interp.status==='optimal'?'<i class="fas fa-check-circle text-green-500"></i>':interp.status==='low'?'<i class="fas fa-arrow-down text-orange-500"></i>':'<i class="fas fa-arrow-up text-red-500"></i>';
-                html += '<div class="flex items-center gap-2 text-sm">'+statusIcon+' <span class="font-medium">'+interp.name+':</span> <span>'+interp.value+' '+interp.unit+'</span>'+(interp.alert?' <span class="text-xs text-red-600">('+interp.alert+')</span>':'')+'</div>';
+                // Find previous value for trend arrow
+                let trendArrow = '';
+                const prevLab = completedLabs.find(pl => pl.id !== lab.id && pl.interpretations?.some(pi => pi.code === interp.code));
+                if (prevLab) {
+                  const prevInterp = prevLab.interpretations.find(pi => pi.code === interp.code);
+                  if (prevInterp) {
+                    const diff = interp.value - prevInterp.value;
+                    if (Math.abs(diff) > 0.01) {
+                      const improving = (interp.status === 'optimal') || (interp.status !== 'optimal' && prevInterp.status !== 'optimal' && Math.abs(diff) < Math.abs(prevInterp.value));
+                      trendArrow = diff > 0
+                        ? '<i class="fas fa-arrow-up text-xs '+(interp.status==='optimal'?'text-green-500':'text-red-400')+'" title="Gestegen t.o.v. vorige"></i>'
+                        : '<i class="fas fa-arrow-down text-xs '+(interp.status==='optimal'?'text-green-500':'text-orange-400')+'" title="Gedaald t.o.v. vorige"></i>';
+                    }
+                  }
+                }
+                // Visual range bar
+                const refRanges = {TSH:{min:0.4,max:2.5,absMax:8},fT4:{min:12,max:22,absMax:35},fT3:{min:4.0,max:6.5,absMax:10},INS:{min:2,max:6,absMax:25},HOMA:{min:0.5,max:2.0,absMax:5},CORT:{min:250,max:700,absMax:1200},FER:{min:30,max:100,absMax:500},VITD:{min:75,max:125,absMax:250},COQ10:{min:0.5,max:1.5,absMax:3},HBA1C:{min:4.0,max:5.6,absMax:12},CRP:{min:0,max:1.0,absMax:10},GLUC:{min:3.9,max:5.5,absMax:15},CHOL:{min:0,max:5.0,absMax:10},HDL:{min:1.0,max:99,absMax:99},LDL:{min:0,max:3.0,absMax:8},TG:{min:0,max:1.7,absMax:5},B12:{min:300,max:900,absMax:1500},HCY:{min:5,max:10,absMax:30},LEPT:{min:4,max:15,absMax:50},MG_RBC:{min:2.0,max:2.6,absMax:4},CALPRO:{min:0,max:50,absMax:500},ZONULIN:{min:0,max:107,absMax:300},PE1:{min:200,max:10000,absMax:10000},SIGA:{min:510,max:2040,absMax:3000},SCFA:{min:70,max:150,absMax:250},BGLUC:{min:0,max:1000,absMax:3000}};
+                const ref = refRanges[interp.code];
+                let rangeBar = '';
+                if (ref) {
+                  const absMax = ref.absMax || (ref.max * 2);
+                  const minPct = (ref.min / absMax) * 100;
+                  const maxPct = (ref.max / absMax) * 100;
+                  const valPct = Math.min(Math.max((interp.value / absMax) * 100, 1), 99);
+                  const barColor = interp.status==='optimal'?'bg-green-500':interp.status==='low'?'bg-orange-500':'bg-red-500';
+                  rangeBar = '<div class="relative h-3 bg-gray-200 rounded-full mt-1 overflow-hidden"><div class="absolute h-full bg-green-200 rounded" style="left:'+minPct+'%;width:'+(maxPct-minPct)+'%"></div><div class="absolute h-full w-2 '+barColor+' rounded" style="left:calc('+valPct+'% - 4px)"></div></div>';
+                }
+                html += '<div class="p-2 rounded bg-gray-50"><div class="flex items-center gap-2 text-sm">'+statusIcon+' <span class="font-medium">'+interp.name+':</span> <span class="font-bold">'+interp.value+' '+interp.unit+'</span> '+trendArrow+(interp.alert?' <span class="text-xs text-red-600">('+interp.alert+')</span>':'')+'</div>'+rangeBar+'</div>';
               });
               html += '</div>';
             }
@@ -1042,38 +1138,325 @@ app.get('/patient/:id', (c) => {
 
         html += '</div>'; // close grid
 
-        // Progress
-        const progress = (p.progress_tracking||[]).sort((a,b)=>new Date(a.measurement_date)-new Date(b.measurement_date));
-        html += '<div class="bg-white rounded-xl shadow mt-6"><div class="p-4 border-b flex items-center justify-between"><h3 class="font-bold text-lg"><i class="fas fa-chart-line mr-2 text-teal-600"></i>Progressie</h3><button onclick="showProgressForm()" class="bg-teal-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-teal-700"><i class="fas fa-plus mr-1"></i>Meting toevoegen</button></div><div class="p-4">';
-        if (!progress.length) { html += '<p class="text-gray-400 text-center py-4">Nog geen metingen</p>'; }
-        else {
-          html += '<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left border-b"><th class="pb-2">Datum</th><th class="pb-2">Gewicht</th><th class="pb-2">Buikomvang</th><th class="pb-2">Energie</th><th class="pb-2">Notities</th></tr></thead><tbody>';
-          progress.forEach(m => {
-            html += '<tr class="border-b"><td class="py-2">'+new Date(m.measurement_date).toLocaleDateString('nl-NL')+'</td><td class="py-2">'+(m.weight_kg||'-')+' kg</td><td class="py-2">'+(m.waist_cm||'-')+' cm</td><td class="py-2">'+(m.energy_level?m.energy_level+'/10':'-')+'</td><td class="py-2 text-gray-500">'+(m.notes||'-')+'</td></tr>';
+        // ==========================================
+        // PROGRESS SECTION with 7 symptom scores + charts
+        // ==========================================
+        const progress = progressData.sort((a,b)=>new Date(a.measurement_date)-new Date(b.measurement_date));
+
+        html += '<div class="bg-white rounded-xl shadow mt-6"><div class="p-4 border-b flex items-center justify-between"><h3 class="font-bold text-lg"><i class="fas fa-chart-line mr-2 text-teal-600"></i>Progressie & Symptomen</h3><button onclick="showProgressForm()" class="bg-teal-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-teal-700"><i class="fas fa-plus mr-1"></i>Meting toevoegen</button></div><div class="p-4">';
+
+        // Progress Form (hidden by default) - NOW with 7 symptom scores
+        html += '<div id="progress-form" class="hidden mb-6 border rounded-xl p-5 bg-teal-50/50">';
+        html += '<h4 class="font-bold text-lg mb-4 text-teal-800"><i class="fas fa-plus-circle mr-2"></i>Nieuwe Meting</h4>';
+        html += '<form onsubmit="saveProgress(event)" class="space-y-4">';
+        html += '<div class="grid grid-cols-2 md:grid-cols-4 gap-3">';
+        html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Datum *</label><input name="measurement_date" type="date" required class="w-full border rounded-lg px-3 py-2" value="'+new Date().toISOString().split('T')[0]+'"></div>';
+        html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Gewicht (kg)</label><input name="weight_kg" type="number" step="0.1" placeholder="Bijv. 82.5" class="w-full border rounded-lg px-3 py-2"></div>';
+        html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Buikomvang (cm)</label><input name="waist_cm" type="number" step="0.1" placeholder="Bijv. 95" class="w-full border rounded-lg px-3 py-2"></div>';
+        html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Energie (1-10)</label><input name="energy_level" type="number" min="1" max="10" placeholder="1=laag, 10=hoog" class="w-full border rounded-lg px-3 py-2"></div>';
+        html += '</div>';
+        // 7 Symptom scores
+        html += '<div class="border-t pt-4 mt-2"><h5 class="font-bold text-sm text-gray-700 mb-3"><i class="fas fa-heartbeat mr-1 text-pink-500"></i>Symptoomscores (1 = ernstig, 10 = geen klachten)</h5>';
+        html += '<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">';
+        Object.entries(symptomLabels).forEach(([key, label]) => {
+          html += '<div class="text-center"><label class="text-xs font-semibold text-gray-600 block mb-1"><i class="fas '+(symptomIcons[key]||'fa-circle')+' mr-1" style="color:'+symptomColors[key]+'"></i>'+label+'</label><input name="symptom_'+key+'" type="number" min="1" max="10" placeholder="1-10" class="w-full border rounded-lg px-2 py-2 text-center"></div>';
+        });
+        html += '</div></div>';
+        html += '<div class="grid grid-cols-1 md:grid-cols-2 gap-3"><div><label class="text-xs font-semibold text-gray-600 block mb-1">Notities</label><input name="notes" placeholder="Opmerkingen..." class="w-full border rounded-lg px-3 py-2"></div><div class="flex items-end"><button type="submit" class="bg-teal-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-teal-700 w-full"><i class="fas fa-save mr-2"></i>Opslaan</button></div></div>';
+        html += '</form></div>';
+
+        if (!progress.length) {
+          html += '<p class="text-gray-400 text-center py-4">Nog geen metingen</p>';
+        } else {
+          // Charts area
+          html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">';
+          html += '<div class="border rounded-xl p-4"><h4 class="font-bold text-sm text-gray-700 mb-2"><i class="fas fa-weight mr-1 text-blue-500"></i>Gewicht & BMI Trend</h4><canvas id="weightChart" height="200"></canvas></div>';
+          html += '<div class="border rounded-xl p-4"><h4 class="font-bold text-sm text-gray-700 mb-2"><i class="fas fa-ruler mr-1 text-teal-500"></i>Buikomvang & Energie Trend</h4><canvas id="waistChart" height="200"></canvas></div>';
+          html += '</div>';
+          // Symptom radar + line chart
+          html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">';
+          html += '<div class="border rounded-xl p-4"><h4 class="font-bold text-sm text-gray-700 mb-2"><i class="fas fa-heartbeat mr-1 text-pink-500"></i>Symptomen Radar (meest recente meting)</h4><canvas id="symptomRadar" height="250"></canvas></div>';
+          html += '<div class="border rounded-xl p-4"><h4 class="font-bold text-sm text-gray-700 mb-2"><i class="fas fa-chart-line mr-1 text-purple-500"></i>Symptoomtrends over Tijd</h4><canvas id="symptomLineChart" height="250"></canvas></div>';
+          html += '</div>';
+
+          // Data table with symptom columns
+          html += '<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left border-b bg-gray-50"><th class="p-2">Datum</th><th class="p-2">Gewicht</th><th class="p-2">Buik</th><th class="p-2">BMI</th><th class="p-2">Energie</th>';
+          Object.values(symptomLabels).forEach(label => {
+            html += '<th class="p-2 text-xs">'+label.substring(0,5)+'.</th>';
+          });
+          html += '<th class="p-2">Notities</th></tr></thead><tbody>';
+          progress.forEach((m, idx) => {
+            const symptoms = m.symptoms || {};
+            const prevM = idx > 0 ? progress[idx-1] : null;
+            const weightDiff = prevM && m.weight_kg && prevM.weight_kg ? (m.weight_kg - prevM.weight_kg).toFixed(1) : null;
+            const weightTrend = weightDiff ? (weightDiff > 0 ? '<span class="text-red-500 text-xs ml-1">+'+weightDiff+'</span>' : weightDiff < 0 ? '<span class="text-green-500 text-xs ml-1">'+weightDiff+'</span>' : '') : '';
+            html += '<tr class="border-b hover:bg-gray-50"><td class="p-2 font-medium">'+new Date(m.measurement_date).toLocaleDateString('nl-NL')+'</td>';
+            html += '<td class="p-2">'+(m.weight_kg ? m.weight_kg+' kg'+weightTrend : '-')+'</td>';
+            html += '<td class="p-2">'+(m.waist_cm||'-')+' cm</td>';
+            // Calculate BMI if we have weight (assume height not available, show dash)
+            html += '<td class="p-2 text-gray-400">-</td>';
+            html += '<td class="p-2">'+(m.energy_level?'<span class="inline-flex items-center"><span class="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center '+(m.energy_level>=7?'bg-green-100 text-green-700':m.energy_level>=4?'bg-yellow-100 text-yellow-700':'bg-red-100 text-red-700')+'">'+m.energy_level+'</span></span>':'-')+'</td>';
+            Object.keys(symptomLabels).forEach(key => {
+              const val = symptoms[key];
+              if (val !== undefined && val !== null) {
+                const color = val >= 7 ? 'bg-green-100 text-green-700' : val >= 4 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700';
+                html += '<td class="p-2 text-center"><span class="inline-block w-6 h-6 rounded-full text-xs font-bold '+color+' leading-6">'+val+'</span></td>';
+              } else {
+                html += '<td class="p-2 text-center text-gray-300">-</td>';
+              }
+            });
+            html += '<td class="p-2 text-gray-500 text-xs">'+(m.notes||'-')+'</td></tr>';
           });
           html += '</tbody></table></div>';
         }
-        html += '<div id="progress-form" class="hidden mt-4 border-t pt-4"><h4 class="font-bold mb-3">Nieuwe meting</h4><form onsubmit="saveProgress(event)" class="grid grid-cols-2 md:grid-cols-4 gap-3"><input name="measurement_date" type="date" required class="border rounded px-3 py-2" value="'+new Date().toISOString().split('T')[0]+'"><input name="weight_kg" type="number" step="0.1" placeholder="Gewicht (kg)" class="border rounded px-3 py-2"><input name="waist_cm" type="number" step="0.1" placeholder="Buikomvang (cm)" class="border rounded px-3 py-2"><input name="energy_level" type="number" min="1" max="10" placeholder="Energie (1-10)" class="border rounded px-3 py-2"><input name="notes" placeholder="Notities..." class="border rounded px-3 py-2 col-span-2"><button type="submit" class="bg-teal-600 text-white px-4 py-2 rounded font-semibold">Opslaan</button></form></div>';
+        html += '</div></div>';
+
+        // ==========================================
+        // FOLLOW-UP PLANNING SECTION
+        // ==========================================
+        html += '<div class="bg-white rounded-xl shadow mt-6"><div class="p-4 border-b flex items-center justify-between"><h3 class="font-bold text-lg"><i class="fas fa-calendar-check mr-2 text-indigo-600"></i>Follow-up Planning</h3><button onclick="showFollowUpForm()" class="bg-indigo-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-indigo-700"><i class="fas fa-plus mr-1"></i>Follow-up toevoegen</button></div><div class="p-4">';
+
+        // Follow-up form (hidden)
+        html += '<div id="followup-form" class="hidden mb-4 border rounded-xl p-5 bg-indigo-50/50">';
+        html += '<h4 class="font-bold mb-3 text-indigo-800"><i class="fas fa-plus-circle mr-1"></i>Nieuwe Follow-up</h4>';
+        html += '<form onsubmit="saveFollowUp(event)" class="grid grid-cols-1 md:grid-cols-3 gap-3">';
+        html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Datum *</label><input name="scheduled_date" type="date" required class="w-full border rounded-lg px-3 py-2"></div>';
+        html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Type *</label><select name="follow_up_type" required class="w-full border rounded-lg px-3 py-2"><option value="check_in">Check-in gesprek</option><option value="measurement">Meting + evaluatie</option><option value="lab_control">Lab-controle</option><option value="protocol_eval">Protocol evaluatie</option><option value="other">Anders</option></select></div>';
+        html += '<div><label class="text-xs font-semibold text-gray-600 block mb-1">Doel</label><input name="goal" placeholder="Doel van deze follow-up..." class="w-full border rounded-lg px-3 py-2"></div>';
+        html += '<div class="md:col-span-2"><label class="text-xs font-semibold text-gray-600 block mb-1">Notities</label><input name="notes" placeholder="Aanvullende notities..." class="w-full border rounded-lg px-3 py-2"></div>';
+        html += '<div class="flex items-end"><button type="submit" class="bg-indigo-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-indigo-700 w-full"><i class="fas fa-save mr-1"></i>Opslaan</button></div>';
+        html += '</form></div>';
+
+        if (!followUpsData.length) {
+          html += '<p class="text-gray-400 text-center py-4">Geen follow-ups gepland</p>';
+        } else {
+          const typeLabels = {check_in:'Check-in',measurement:'Meting',lab_control:'Lab-controle',protocol_eval:'Protocol evaluatie',other:'Anders'};
+          const typeIcons = {check_in:'fa-comments',measurement:'fa-ruler',lab_control:'fa-flask',protocol_eval:'fa-clipboard-check',other:'fa-calendar'};
+          const typeColors = {check_in:'bg-blue-100 text-blue-700',measurement:'bg-teal-100 text-teal-700',lab_control:'bg-yellow-100 text-yellow-700',protocol_eval:'bg-purple-100 text-purple-700',other:'bg-gray-100 text-gray-700'};
+          const statusStyles = {scheduled:'bg-blue-100 text-blue-700',completed:'bg-green-100 text-green-700',cancelled:'bg-red-100 text-red-700',missed:'bg-orange-100 text-orange-700'};
+          const statusLabels = {scheduled:'Gepland',completed:'Voltooid',cancelled:'Geannuleerd',missed:'Gemist'};
+
+          html += '<div class="space-y-2">';
+          followUpsData.forEach(fu => {
+            const dateStr = new Date(fu.scheduled_date).toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric'});
+            const isPast = new Date(fu.scheduled_date) < new Date() && fu.status === 'scheduled';
+            const fuType = fu.follow_up_type || 'other';
+            html += '<div class="flex items-center gap-3 border rounded-lg p-3 '+(isPast?'bg-orange-50 border-orange-200':'hover:bg-gray-50')+'">';
+            html += '<div class="w-10 h-10 rounded-full '+(typeColors[fuType]||'bg-gray-100')+' flex items-center justify-center flex-shrink-0"><i class="fas '+(typeIcons[fuType]||'fa-calendar')+'"></i></div>';
+            html += '<div class="flex-1"><div class="flex items-center gap-2"><span class="font-semibold text-sm">'+(typeLabels[fuType]||fuType)+'</span><span class="px-2 py-0.5 rounded-full text-xs font-semibold '+(statusStyles[fu.status]||'bg-gray-100')+'">'+(statusLabels[fu.status]||fu.status)+'</span>'+(isPast?'<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-200 text-orange-800">Achterstallig</span>':'')+'</div>';
+            html += '<p class="text-sm text-gray-500"><i class="far fa-calendar mr-1"></i>'+dateStr+(fu.goal?' | <i class="fas fa-bullseye mr-1"></i>'+fu.goal:'')+'</p>';
+            if (fu.notes) html += '<p class="text-xs text-gray-400 mt-1">'+fu.notes+'</p>';
+            html += '</div>';
+            // Action buttons
+            if (fu.status === 'scheduled') {
+              html += '<div class="flex gap-1 flex-shrink-0">';
+              html += '<button onclick="updateFollowUp(\\''+fu.id+'\\',\\'completed\\')" class="text-green-600 hover:text-green-800 text-sm p-1" title="Markeer als voltooid"><i class="fas fa-check-circle"></i></button>';
+              html += '<button onclick="updateFollowUp(\\''+fu.id+'\\',\\'cancelled\\')" class="text-red-400 hover:text-red-600 text-sm p-1" title="Annuleren"><i class="fas fa-times-circle"></i></button>';
+              html += '</div>';
+            }
+            html += '</div>';
+          });
+          html += '</div>';
+        }
         html += '</div></div>';
 
         document.getElementById('profile-container').innerHTML = html;
+
+        // Render charts after DOM update
+        if (progress.length >= 1) {
+          setTimeout(() => renderCharts(progress), 100);
+        }
       } catch(e) {
+        console.error(e);
         document.getElementById('profile-container').innerHTML = '<p class="text-red-500 text-center py-12">Fout: '+e.message+'</p>';
       }
     }
 
+    function renderCharts(progress) {
+      const labels = progress.map(m => new Date(m.measurement_date).toLocaleDateString('nl-NL',{day:'numeric',month:'short'}));
+
+      // 1. Weight Chart
+      const weightCtx = document.getElementById('weightChart');
+      if (weightCtx) {
+        new Chart(weightCtx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Gewicht (kg)',
+              data: progress.map(m => m.weight_kg || null),
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,0.1)',
+              fill: true,
+              tension: 0.3,
+              spanGaps: true,
+              pointRadius: 4,
+              pointBackgroundColor: '#3b82f6'
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: true, position: 'top' } },
+            scales: {
+              y: { beginAtZero: false, title: { display: true, text: 'kg' } }
+            }
+          }
+        });
+      }
+
+      // 2. Waist + Energy Chart
+      const waistCtx = document.getElementById('waistChart');
+      if (waistCtx) {
+        new Chart(waistCtx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Buikomvang (cm)',
+              data: progress.map(m => m.waist_cm || null),
+              borderColor: '#14b8a6',
+              backgroundColor: 'rgba(20,184,166,0.1)',
+              fill: true,
+              tension: 0.3,
+              spanGaps: true,
+              yAxisID: 'y',
+              pointRadius: 4
+            },{
+              label: 'Energie (1-10)',
+              data: progress.map(m => m.energy_level || null),
+              borderColor: '#f59e0b',
+              borderDash: [5,5],
+              tension: 0.3,
+              spanGaps: true,
+              yAxisID: 'y1',
+              pointRadius: 4,
+              pointBackgroundColor: '#f59e0b'
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: true, position: 'top' } },
+            scales: {
+              y: { beginAtZero: false, position: 'left', title: { display: true, text: 'cm' } },
+              y1: { beginAtZero: true, min: 0, max: 10, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'score' } }
+            }
+          }
+        });
+      }
+
+      // 3. Symptom Radar (latest measurement with symptoms)
+      const radarCtx = document.getElementById('symptomRadar');
+      const latestWithSymptoms = [...progress].reverse().find(m => m.symptoms && Object.keys(m.symptoms).length > 0);
+      if (radarCtx && latestWithSymptoms) {
+        const symKeys = Object.keys(symptomLabels);
+        const symValues = symKeys.map(k => latestWithSymptoms.symptoms[k] || 0);
+        new Chart(radarCtx, {
+          type: 'radar',
+          data: {
+            labels: symKeys.map(k => symptomLabels[k]),
+            datasets: [{
+              label: 'Score (10=geen klachten)',
+              data: symValues,
+              backgroundColor: 'rgba(139,92,246,0.2)',
+              borderColor: '#8b5cf6',
+              pointBackgroundColor: symKeys.map(k => symptomColors[k]),
+              pointRadius: 5,
+              borderWidth: 2
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              r: { min: 0, max: 10, ticks: { stepSize: 2 }, pointLabels: { font: { size: 11, weight: 'bold' } } }
+            },
+            plugins: { legend: { display: false } }
+          }
+        });
+      } else if (radarCtx) {
+        radarCtx.parentElement.innerHTML += '<p class="text-gray-400 text-center text-sm mt-4">Nog geen symptoomscores ingevuld</p>';
+      }
+
+      // 4. Symptom Line Chart (trends over time)
+      const lineCtx = document.getElementById('symptomLineChart');
+      const measWithSymptoms = progress.filter(m => m.symptoms && Object.keys(m.symptoms).length > 0);
+      if (lineCtx && measWithSymptoms.length >= 1) {
+        const symLabelsArr = measWithSymptoms.map(m => new Date(m.measurement_date).toLocaleDateString('nl-NL',{day:'numeric',month:'short'}));
+        const datasets = Object.keys(symptomLabels).map(key => ({
+          label: symptomLabels[key],
+          data: measWithSymptoms.map(m => (m.symptoms && m.symptoms[key]) || null),
+          borderColor: symptomColors[key],
+          backgroundColor: symptomColors[key]+'20',
+          tension: 0.3,
+          spanGaps: true,
+          pointRadius: 3,
+          borderWidth: 2
+        }));
+        new Chart(lineCtx, {
+          type: 'line',
+          data: { labels: symLabelsArr, datasets },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } },
+            scales: {
+              y: { min: 0, max: 10, title: { display: true, text: 'Score (10=goed)' }, ticks: { stepSize: 2 } }
+            }
+          }
+        });
+      } else if (lineCtx) {
+        lineCtx.parentElement.innerHTML += '<p class="text-gray-400 text-center text-sm mt-4">Nog geen symptoomscores beschikbaar voor trendweergave</p>';
+      }
+    }
+
     function showProgressForm() { document.getElementById('progress-form').classList.toggle('hidden'); }
+    function showFollowUpForm() { document.getElementById('followup-form').classList.toggle('hidden'); }
 
     async function saveProgress(e) {
       e.preventDefault();
       const form = e.target;
-      const data = Object.fromEntries(new FormData(form));
-      data.patient_id = patientId;
-      Object.keys(data).forEach(k=>{if(!data[k])delete data[k];if(k==='weight_kg'||k==='waist_cm')data[k]=parseFloat(data[k]);if(k==='energy_level')data[k]=parseInt(data[k]);});
+      const formData = new FormData(form);
+      const data = { patient_id: patientId };
+
+      // Extract base fields
+      data.measurement_date = formData.get('measurement_date');
+      if (formData.get('weight_kg')) data.weight_kg = parseFloat(formData.get('weight_kg'));
+      if (formData.get('waist_cm')) data.waist_cm = parseFloat(formData.get('waist_cm'));
+      if (formData.get('energy_level')) data.energy_level = parseInt(formData.get('energy_level'));
+      if (formData.get('notes')) data.notes = formData.get('notes');
+
+      // Extract symptom scores into JSONB
+      const symptoms = {};
+      Object.keys(symptomLabels).forEach(key => {
+        const val = formData.get('symptom_'+key);
+        if (val) symptoms[key] = parseInt(val);
+      });
+      if (Object.keys(symptoms).length > 0) data.symptoms = symptoms;
+
       try {
         const res = await fetch('/api/progress',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
         if(res.ok) loadProfile();
-        else alert('Fout bij opslaan');
+        else { const err = await res.json(); alert('Fout: '+(err.error||'Onbekend')); }
+      } catch(e){alert(e.message);}
+    }
+
+    async function saveFollowUp(e) {
+      e.preventDefault();
+      const form = e.target;
+      const data = Object.fromEntries(new FormData(form));
+      data.patient_id = patientId;
+      data.status = 'scheduled';
+      Object.keys(data).forEach(k => { if (!data[k]) delete data[k]; });
+      try {
+        const res = await fetch('/api/follow-ups',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+        if(res.ok) loadProfile();
+        else { const err = await res.json(); alert('Fout: '+(err.error||'Onbekend')); }
+      } catch(e){alert(e.message);}
+    }
+
+    async function updateFollowUp(id, status) {
+      try {
+        const res = await fetch('/api/follow-ups/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status, completed_date: status==='completed'?new Date().toISOString().split('T')[0]:null})});
+        if(res.ok) loadProfile();
+        else alert('Fout bij updaten');
       } catch(e){alert(e.message);}
     }
 
