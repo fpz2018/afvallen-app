@@ -1965,44 +1965,58 @@ const portalHead = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gewichtsanalyse Portaal - Marc's Praktijk</title>
+  <title>Grip op je Gewicht - Wetenschappelijke Aanpak</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <script>
     tailwind.config = {
       theme: {
         extend: {
           colors: {
             portal: { 50:'#f0fdf4',100:'#dcfce7',200:'#bbf7d0',300:'#86efac',400:'#4ade80',500:'#22c55e',600:'#16a34a',700:'#15803d',800:'#166534',900:'#14532d' }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif']
           }
         }
       }
     }
   </script>
   <style>
-    .fade-in { animation: fadeIn 0.4s ease-out; }
-    @keyframes fadeIn { from { opacity:0; transform:translateY(15px); } to { opacity:1; transform:translateY(0); } }
-    .card-hover { transition: all 0.3s; }
-    .card-hover:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.12); }
+    .fade-in { animation: fadeIn 0.5s ease-out; }
+    .fade-in-delay { animation: fadeIn 0.6s ease-out 0.15s both; }
+    .fade-in-delay-2 { animation: fadeIn 0.6s ease-out 0.3s both; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(20px); } to { opacity:1; transform:translateY(0); } }
+    .card-hover { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+    .card-hover:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
     .progress-bar { transition: width 0.5s ease; }
     .pulse { animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.6; } }
+    .gradient-text { background: linear-gradient(135deg, #16a34a, #0d9488); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .hero-pattern { background-image: radial-gradient(circle at 20% 50%, rgba(255,255,255,0.08) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(255,255,255,0.05) 0%, transparent 40%); }
+    .step-line::after { content:''; position:absolute; top:2.5rem; left:50%; width:calc(100% + 2rem); height:2px; background:linear-gradient(90deg,#bbf7d0,#86efac); z-index:0; }
+    @media(max-width:768px) { .step-line::after { display:none; } }
   </style>
 </head>`
 
 const portalNav = `
-<nav class="bg-gradient-to-r from-portal-700 to-portal-900 text-white shadow-lg">
-  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
-    <a href="/portaal" class="flex items-center gap-3 hover:opacity-90">
-      <i class="fas fa-leaf text-2xl"></i>
+<nav class="bg-white/95 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+    <a href="/portaal" class="flex items-center gap-3 hover:opacity-80 transition">
+      <div class="w-10 h-10 bg-gradient-to-br from-portal-500 to-teal-600 rounded-xl flex items-center justify-center">
+        <i class="fas fa-leaf text-white text-lg"></i>
+      </div>
       <div>
-        <h1 class="text-lg font-bold leading-tight">Gewichtsanalyse Portaal</h1>
-        <p class="text-xs opacity-75">Fysiopraktijk Zeist - Marc's Praktijk</p>
+        <h1 class="text-base font-bold text-gray-800 leading-tight">Grip op je Gewicht</h1>
+        <p class="text-xs text-gray-400">Fysiopraktijk Zeist</p>
       </div>
     </a>
     <div class="flex items-center gap-3">
-      <a href="/portaal" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-home mr-1"></i> Home</a>
-      <a href="/portaal/inloggen" class="bg-white text-portal-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-portal-50"><i class="fas fa-sign-in-alt mr-1"></i> Inloggen</a>
+      <a href="/portaal" class="hidden sm:inline-flex px-3 py-2 rounded-lg hover:bg-gray-100 text-sm text-gray-600 font-medium transition"><i class="fas fa-home mr-1"></i> Home</a>
+      <a href="/portaal/inloggen" class="bg-portal-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-portal-700 transition shadow-sm"><i class="fas fa-sign-in-alt mr-1"></i> Inloggen</a>
     </div>
   </div>
 </nav>`
@@ -2212,150 +2226,218 @@ app.post('/api/portal/lab-upload', async (c) => {
 // LANDINGSPAGINA
 app.get('/portaal', (c) => {
   return c.html(`${portalHead}
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 min-h-screen font-sans">
   ${portalNav}
 
-  <!-- Hero Section -->
-  <section class="bg-gradient-to-br from-portal-600 via-portal-700 to-teal-800 text-white py-16 md:py-24">
-    <div class="max-w-5xl mx-auto px-4">
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+  <!-- HERO -->
+  <section class="hero-pattern bg-gradient-to-br from-portal-700 via-portal-800 to-teal-900 text-white py-20 md:py-28">
+    <div class="max-w-6xl mx-auto px-4">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
         <div class="fade-in">
-          <div class="inline-flex items-center gap-2 bg-white/15 px-4 py-2 rounded-full text-sm mb-6">
-            <i class="fas fa-shield-alt"></i>
-            <span>Veilig & Vertrouwelijk</span>
+          <div class="inline-flex items-center gap-2 bg-white/10 backdrop-blur px-4 py-2 rounded-full text-sm mb-6 border border-white/10">
+            <i class="fas fa-microscope"></i>
+            <span>Wetenschappelijk onderbouwd</span>
           </div>
-          <h1 class="text-4xl md:text-5xl font-black leading-tight mb-6">
-            Ontdek waarom afvallen<br>
-            <span class="text-portal-200">niet altijd lukt</span>
+          <h1 class="text-4xl md:text-5xl lg:text-[3.4rem] font-black leading-[1.1] mb-6 tracking-tight">
+            Grip op je Gewicht<br>
+            <span class="text-portal-300">Een blauwdruk voor<br>blijvend resultaat</span>
           </h1>
-          <p class="text-lg opacity-90 mb-8 leading-relaxed">
-            Vul onze wetenschappelijk onderbouwde vragenlijst in en ontdek welk type gewichtsprobleem 
-            bij u past. Uw therapeut Marc gebruikt deze informatie om een persoonlijk plan op te stellen.
+          <p class="text-lg text-white/85 mb-8 leading-relaxed max-w-lg">
+            Heb je al talloze pogingen gedaan om af te vallen, maar val je steeds terug? Of wil je dit keer direct de juiste aanpak kiezen zonder te gokken?
+          </p>
+          <p class="text-base text-portal-200 mb-10 leading-relaxed max-w-lg font-medium">
+            <strong class="text-white">Stoppen met raden, starten met weten.</strong> Door middel van diepgaande assessments en laboratoriummetingen bepalen we exact wat jouw lichaam nodig heeft.
           </p>
           <div class="flex flex-col sm:flex-row gap-4">
-            <a href="/portaal/inloggen" class="bg-white text-portal-700 px-8 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition text-center shadow-lg">
-              <i class="fas fa-clipboard-check mr-2"></i>Start Vragenlijst
+            <a href="/portaal/inloggen" class="bg-white text-portal-700 px-8 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition text-center shadow-lg hover:shadow-xl">
+              <i class="fas fa-arrow-right mr-2"></i>Start mijn analyse
             </a>
-            <a href="#hoe-werkt-het" class="border-2 border-white/30 px-8 py-4 rounded-xl font-semibold text-lg hover:bg-white/10 transition text-center">
-              <i class="fas fa-info-circle mr-2"></i>Meer informatie
+            <a href="#waarom" class="border-2 border-white/25 px-8 py-4 rounded-xl font-semibold text-lg hover:bg-white/10 transition text-center">
+              <i class="fas fa-info-circle mr-2"></i>Hoe het werkt
             </a>
           </div>
         </div>
-        <div class="hidden md:flex justify-center">
-          <div class="bg-white/10 backdrop-blur rounded-2xl p-8 space-y-4 max-w-xs">
-            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-clipboard-list"></i></div><div><p class="font-bold">15 vragen</p><p class="text-sm opacity-75">~5-10 minuten</p></div></div>
-            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-brain"></i></div><div><p class="font-bold">7 categorieën</p><p class="text-sm opacity-75">Automatische analyse</p></div></div>
-            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-flask"></i></div><div><p class="font-bold">Lab-advies</p><p class="text-sm opacity-75">Op maat voor u</p></div></div>
-            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-heart"></i></div><div><p class="font-bold">Persoonlijk plan</p><p class="text-sm opacity-75">Voeding + supplementen</p></div></div>
+        <div class="hidden lg:block fade-in-delay">
+          <div class="bg-white/[0.07] backdrop-blur-sm rounded-3xl p-8 border border-white/10 space-y-5">
+            <div class="flex items-start gap-4"><div class="w-12 h-12 bg-portal-500/30 rounded-2xl flex items-center justify-center flex-shrink-0"><i class="fas fa-clipboard-check text-lg"></i></div><div><p class="font-bold text-base">Wetenschappelijk Assessment</p><p class="text-sm text-white/60 mt-1">Vragenlijsten die jouw unieke profiel in kaart brengen</p></div></div>
+            <div class="flex items-start gap-4"><div class="w-12 h-12 bg-teal-500/30 rounded-2xl flex items-center justify-center flex-shrink-0"><i class="fas fa-flask text-lg"></i></div><div><p class="font-bold text-base">Laboratoriumanalyse</p><p class="text-sm text-white/60 mt-1">Bloed- en ontlastingsonderzoek voor een compleet beeld</p></div></div>
+            <div class="flex items-start gap-4"><div class="w-12 h-12 bg-emerald-500/30 rounded-2xl flex items-center justify-center flex-shrink-0"><i class="fas fa-chart-line text-lg"></i></div><div><p class="font-bold text-base">Data-gedreven voortgang</p><p class="text-sm text-white/60 mt-1">Meetbare resultaten in heldere grafieken</p></div></div>
+            <div class="flex items-start gap-4"><div class="w-12 h-12 bg-green-500/30 rounded-2xl flex items-center justify-center flex-shrink-0"><i class="fas fa-user-md text-lg"></i></div><div><p class="font-bold text-base">Persoonlijk plan op maat</p><p class="text-sm text-white/60 mt-1">Voeding, supplementen en leefstijl specifiek voor jou</p></div></div>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Hoe werkt het -->
-  <section id="hoe-werkt-het" class="py-16 bg-white">
-    <div class="max-w-5xl mx-auto px-4">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl font-black text-gray-800 mb-4">Hoe werkt het?</h2>
-        <p class="text-gray-500 max-w-2xl mx-auto">In vier eenvoudige stappen naar inzicht in uw gewichtsprobleem en een persoonlijk behandelplan.</p>
+  <!-- WAAROM DIT WERKT -->
+  <section id="waarom" class="py-20 bg-white">
+    <div class="max-w-6xl mx-auto px-4">
+      <div class="text-center mb-14">
+        <p class="text-portal-600 font-semibold text-sm uppercase tracking-wider mb-3">De methode</p>
+        <h2 class="text-3xl md:text-4xl font-black text-gray-900 mb-4">Waarom dit systeem w&eacute;l werkt</h2>
+        <p class="text-gray-500 max-w-2xl mx-auto text-lg">Afvallen is geen kwestie van "minder eten en meer bewegen" alleen. Het gaat over hormonale balans, stofwisselingstypes en complexe biochemische processen.</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div class="bg-gradient-to-b from-portal-50 to-white p-8 rounded-2xl border border-portal-100 card-hover">
+          <div class="w-14 h-14 bg-portal-100 rounded-2xl flex items-center justify-center mb-5"><i class="fas fa-clipboard-check text-portal-600 text-2xl"></i></div>
+          <h3 class="font-bold text-gray-900 text-lg mb-3">Wetenschappelijk Assessment</h3>
+          <p class="text-gray-500 leading-relaxed">De vragenlijsten vormen de basis voor jouw unieke profiel. Geen giswerk, maar gerichte screening op 7 mogelijke oorzaken.</p>
+        </div>
+        <div class="bg-gradient-to-b from-teal-50 to-white p-8 rounded-2xl border border-teal-100 card-hover">
+          <div class="w-14 h-14 bg-teal-100 rounded-2xl flex items-center justify-center mb-5"><i class="fas fa-flask text-teal-600 text-2xl"></i></div>
+          <h3 class="font-bold text-gray-900 text-lg mb-3">Noodzakelijke Baselinemeting</h3>
+          <p class="text-gray-500 leading-relaxed">Om een zuiver beeld te krijgen van jouw startpunt is laboratoriumonderzoek een essentieel onderdeel. Heb je al recente resultaten? Upload ze direct in het portaal.</p>
+        </div>
+        <div class="bg-gradient-to-b from-emerald-50 to-white p-8 rounded-2xl border border-emerald-100 card-hover">
+          <div class="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mb-5"><i class="fas fa-chart-line text-emerald-600 text-2xl"></i></div>
+          <h3 class="font-bold text-gray-900 text-lg mb-3">Data-gedreven Voortgang</h3>
+          <p class="text-gray-500 leading-relaxed">We meten niet alleen je gewicht. BMI, vetpercentage en slaapkwaliteit worden nauwgezet bijgehouden in heldere grafieken. Zo zie je exact wat er verandert.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PERSOONLIJK PLAN -->
+  <section class="py-20 bg-gray-50">
+    <div class="max-w-6xl mx-auto px-4">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+        <div>
+          <p class="text-portal-600 font-semibold text-sm uppercase tracking-wider mb-3">Het resultaat</p>
+          <h2 class="text-3xl md:text-4xl font-black text-gray-900 mb-6">Jouw Persoonlijke<br>Plan van Aanpak</h2>
+          <p class="text-gray-500 text-lg mb-8 leading-relaxed">Het eindresultaat van de analyse is een volledig gepersonaliseerd programma. Geen algemene tips, maar een <strong class="text-gray-700">concreet plan op maat</strong>.</p>
+          <div class="space-y-5">
+            <div class="flex items-start gap-4">
+              <div class="w-11 h-11 bg-green-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"><i class="fas fa-utensils text-green-600"></i></div>
+              <div><h4 class="font-bold text-gray-800 mb-1">Voeding</h4><p class="text-gray-500 text-sm leading-relaxed">Precies die brandstof die jouw specifieke metabolisme nodig heeft.</p></div>
+            </div>
+            <div class="flex items-start gap-4">
+              <div class="w-11 h-11 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"><i class="fas fa-capsules text-blue-600"></i></div>
+              <div><h4 class="font-bold text-gray-800 mb-1">Supplementen</h4><p class="text-gray-500 text-sm leading-relaxed">Gerichte ondersteuning op basis van jouw tekorten en labwaarden.</p></div>
+            </div>
+            <div class="flex items-start gap-4">
+              <div class="w-11 h-11 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"><i class="fas fa-heart-pulse text-amber-600"></i></div>
+              <div><h4 class="font-bold text-gray-800 mb-1">Leefstijlfactoren</h4><p class="text-gray-500 text-sm leading-relaxed">Praktische adviezen over beweging, stressmanagement en herstel.</p></div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden">
+          <div class="bg-gradient-to-r from-portal-600 to-teal-600 p-6 text-white">
+            <div class="flex items-center gap-3 mb-1"><i class="fas fa-file-medical text-xl"></i><h3 class="font-bold text-lg">Voorbeeld protocol</h3></div>
+            <p class="text-white/70 text-sm">Gegenereerd op basis van jouw persoonlijke data</p>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="flex items-center gap-3 text-sm"><span class="w-2 h-2 bg-green-500 rounded-full"></span><span class="text-gray-600">Omega-3 EPA/DHA &mdash; 2000mg/dag</span></div>
+            <div class="flex items-center gap-3 text-sm"><span class="w-2 h-2 bg-green-500 rounded-full"></span><span class="text-gray-600">Vitamine D3 &mdash; 3000 IE/dag</span></div>
+            <div class="flex items-center gap-3 text-sm"><span class="w-2 h-2 bg-green-500 rounded-full"></span><span class="text-gray-600">Magnesium bisglycinaat &mdash; 400mg/dag</span></div>
+            <div class="flex items-center gap-3 text-sm"><span class="w-2 h-2 bg-blue-500 rounded-full"></span><span class="text-gray-600">Koolhydraatarm voedingsschema (fase 1)</span></div>
+            <div class="flex items-center gap-3 text-sm"><span class="w-2 h-2 bg-amber-500 rounded-full"></span><span class="text-gray-600">Slaaphygi&euml;ne protocol + ademhalingsoefeningen</span></div>
+            <div class="border-t pt-4 mt-2"><p class="text-xs text-gray-400 italic"><i class="fas fa-info-circle mr-1"></i>Dit is een voorbeeld. Jouw protocol wordt volledig afgestemd op jouw labwaarden en assessment.</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOE HET PROCES WERKT -->
+  <section class="py-20 bg-white">
+    <div class="max-w-6xl mx-auto px-4">
+      <div class="text-center mb-14">
+        <p class="text-portal-600 font-semibold text-sm uppercase tracking-wider mb-3">Het proces</p>
+        <h2 class="text-3xl md:text-4xl font-black text-gray-900 mb-4">Van data naar resultaat</h2>
+        <p class="text-gray-500 max-w-2xl mx-auto text-lg">Jij levert de gegevens, de expert doet de diepgaande analyse.</p>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
-        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
-          <div class="w-16 h-16 bg-portal-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl font-black text-portal-600">1</span>
+        <div class="text-center relative">
+          <div class="relative z-10 w-16 h-16 bg-portal-600 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-portal-200">
+            <i class="fas fa-clipboard-list text-white text-xl"></i>
           </div>
-          <h3 class="font-bold text-gray-800 mb-2">Toegangscode ontvangen</h3>
-          <p class="text-sm text-gray-500">Uw therapeut geeft u een persoonlijke toegangscode waarmee u kunt inloggen.</p>
+          <div class="bg-portal-50 rounded-xl px-4 py-3 mb-3 inline-block"><span class="text-portal-700 font-black text-sm">STAP 1</span></div>
+          <h3 class="font-bold text-gray-800 mb-2">Digitale Intake</h3>
+          <p class="text-sm text-gray-500">Jij vult de uitgebreide vragenlijsten in via dit portaal.</p>
         </div>
-        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
-          <div class="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl font-black text-blue-600">2</span>
+        <div class="text-center relative">
+          <div class="relative z-10 w-16 h-16 bg-teal-600 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-teal-200">
+            <i class="fas fa-vials text-white text-xl"></i>
           </div>
-          <h3 class="font-bold text-gray-800 mb-2">Vragenlijst invullen</h3>
-          <p class="text-sm text-gray-500">Beantwoord 15 vragen over uw gezondheid, leefstijl en klachten. Duurt 5-10 minuten.</p>
+          <div class="bg-teal-50 rounded-xl px-4 py-3 mb-3 inline-block"><span class="text-teal-700 font-black text-sm">STAP 2</span></div>
+          <h3 class="font-bold text-gray-800 mb-2">Lab-Analyse</h3>
+          <p class="text-sm text-gray-500">Op basis van jouw profiel wordt gericht laboratoriumonderzoek uitgevoerd, of jouw bestaande resultaten geanalyseerd.</p>
         </div>
-        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
-          <div class="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl font-black text-purple-600">3</span>
+        <div class="text-center relative">
+          <div class="relative z-10 w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-emerald-200">
+            <i class="fas fa-user-md text-white text-xl"></i>
           </div>
-          <h3 class="font-bold text-gray-800 mb-2">Automatische analyse</h3>
-          <p class="text-sm text-gray-500">Ons systeem analyseert uw antwoorden en identificeert mogelijke oorzaken van gewichtsproblemen.</p>
+          <div class="bg-emerald-50 rounded-xl px-4 py-3 mb-3 inline-block"><span class="text-emerald-700 font-black text-sm">STAP 3</span></div>
+          <h3 class="font-bold text-gray-800 mb-2">Expert Analyse</h3>
+          <p class="text-sm text-gray-500">Jouw complete dataset wordt geanalyseerd door een specialist met een unieke combinatie van expertise.</p>
         </div>
-        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
-          <div class="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl font-black text-amber-600">4</span>
+        <div class="text-center relative">
+          <div class="relative z-10 w-16 h-16 bg-green-600 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-green-200">
+            <i class="fas fa-chart-line text-white text-xl"></i>
           </div>
-          <h3 class="font-bold text-gray-800 mb-2">Persoonlijk plan</h3>
-          <p class="text-sm text-gray-500">Uw therapeut bespreekt de resultaten en stelt een behandelplan samen met voeding, supplementen en leefstijladvies.</p>
+          <div class="bg-green-50 rounded-xl px-4 py-3 mb-3 inline-block"><span class="text-green-700 font-black text-sm">STAP 4</span></div>
+          <h3 class="font-bold text-gray-800 mb-2">Monitoring</h3>
+          <p class="text-sm text-gray-500">We houden de voortgang bij in overzichtelijke grafieken, zodat we altijd kunnen bijsturen.</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Voordelen -->
-  <section class="py-16 bg-gray-50">
-    <div class="max-w-5xl mx-auto px-4">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl font-black text-gray-800 mb-4">Waarom deze aanpak?</h2>
-        <p class="text-gray-500 max-w-2xl mx-auto">Afvallen is méér dan calorieën tellen. Wij kijken naar de onderliggende oorzaken.</p>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
-          <div class="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-fire text-red-600 text-xl"></i></div>
-          <h3 class="font-bold text-gray-800 mb-2">Metabole Weerstand</h3>
-          <p class="text-sm text-gray-500">Sommige lichamen zijn metabolisch "vastgelopen". Wij identificeren of uw stofwisseling geblokkeerd is en waarom.</p>
-        </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
-          <div class="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-shield-virus text-indigo-600 text-xl"></i></div>
-          <h3 class="font-bold text-gray-800 mb-2">Schildklier & Hormonen</h3>
-          <p class="text-sm text-gray-500">Schildklierproblemen, PCOS, en hormonale disbalans worden vaak gemist bij standaard diëten. Wij testen gericht.</p>
-        </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
-          <div class="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-brain text-orange-600 text-xl"></i></div>
-          <h3 class="font-bold text-gray-800 mb-2">Cortisol & Stress</h3>
-          <p class="text-sm text-gray-500">Chronische stress verhoogt cortisol en blokkeert vetverbranding. Wij brengen dit in kaart met gerichte bloedtesten.</p>
-        </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
-          <div class="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-chart-line text-yellow-600 text-xl"></i></div>
-          <h3 class="font-bold text-gray-800 mb-2">Insuline Resistentie</h3>
-          <p class="text-sm text-gray-500">Hoge insulinespiegels maken afvallen bijna onmogelijk. Wij meten dit nauwkeurig met HOMA-IR berekening.</p>
-        </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
-          <div class="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-pills text-green-600 text-xl"></i></div>
-          <h3 class="font-bold text-gray-800 mb-2">Orthomoleculaire Aanpak</h3>
-          <p class="text-sm text-gray-500">Op basis van uw bloedwaarden stellen wij een gericht supplementenprotocol samen om tekorten aan te vullen.</p>
-        </div>
-        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
-          <div class="w-12 h-12 bg-teal-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-dna text-teal-600 text-xl"></i></div>
-          <h3 class="font-bold text-gray-800 mb-2">Darmgezondheid</h3>
-          <p class="text-sm text-gray-500">Ontlastingsonderzoek (calprotectine, zonuline, elastase) geeft inzicht in darmpermeabiliteit en ontstekingen.</p>
+  <!-- EXPERT -->
+  <section class="py-20 bg-gray-50">
+    <div class="max-w-4xl mx-auto px-4">
+      <div class="bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden">
+        <div class="grid grid-cols-1 md:grid-cols-3">
+          <div class="bg-gradient-to-b from-portal-600 to-teal-700 p-8 flex flex-col items-center justify-center text-white text-center">
+            <div class="w-24 h-24 bg-white/15 rounded-full flex items-center justify-center mb-4 border-2 border-white/20">
+              <i class="fas fa-user-md text-4xl"></i>
+            </div>
+            <h3 class="font-bold text-xl mb-1">Marc</h3>
+            <p class="text-white/75 text-sm">Fysiopraktijk Zeist</p>
+          </div>
+          <div class="md:col-span-2 p-8">
+            <p class="text-portal-600 font-semibold text-sm uppercase tracking-wider mb-3">De expert achter de analyse</p>
+            <h3 class="text-2xl font-black text-gray-900 mb-4">Unieke combinatie van expertise</h3>
+            <p class="text-gray-500 mb-6 leading-relaxed">Jouw volledige dataset wordt geanalyseerd door een specialist met een zeldzame drievoudige expertise:</p>
+            <div class="space-y-3">
+              <div class="flex items-center gap-3"><div class="w-8 h-8 bg-portal-100 rounded-lg flex items-center justify-center"><i class="fas fa-graduation-cap text-portal-600 text-sm"></i></div><p class="text-gray-700 font-medium text-sm">Orthomoleculair Natuurgeneeskundig Therapeut <span class="text-gray-400">(HBO)</span></p></div>
+              <div class="flex items-center gap-3"><div class="w-8 h-8 bg-teal-100 rounded-lg flex items-center justify-center"><i class="fas fa-brain text-teal-600 text-sm"></i></div><p class="text-gray-700 font-medium text-sm">KPNI-specialist <span class="text-gray-400">(Klinische Psycho-Neuro-Immunologie)</span></p></div>
+              <div class="flex items-center gap-3"><div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center"><i class="fas fa-hands-helping text-blue-600 text-sm"></i></div><p class="text-gray-700 font-medium text-sm">Fysiotherapeut <span class="text-gray-400">met 30 jaar ervaring</span></p></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- 7 Categorieën -->
-  <section class="py-16 bg-white">
-    <div class="max-w-5xl mx-auto px-4">
-      <div class="text-center mb-12">
-        <h2 class="text-3xl font-black text-gray-800 mb-4">7 gewichtscategorieën die wij onderzoeken</h2>
-        <p class="text-gray-500 max-w-2xl mx-auto">Onze vragenlijst screent op elk van deze categorieën om de juiste aanpak te bepalen.</p>
+  <!-- VOOR WIE -->
+  <section class="py-20 bg-white">
+    <div class="max-w-6xl mx-auto px-4">
+      <div class="text-center mb-14">
+        <p class="text-portal-600 font-semibold text-sm uppercase tracking-wider mb-3">Herkenbaar?</p>
+        <h2 class="text-3xl md:text-4xl font-black text-gray-900 mb-4">Voor wie is dit?</h2>
       </div>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-center"><i class="fas fa-bolt text-red-500 text-2xl mb-2"></i><p class="font-bold text-sm text-red-700">Metabole Weerstand</p></div>
-        <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-center"><i class="fas fa-shield-virus text-indigo-500 text-2xl mb-2"></i><p class="font-bold text-sm text-indigo-700">Schildklier-gedreven</p></div>
-        <div class="bg-pink-50 border border-pink-200 rounded-xl p-4 text-center"><i class="fas fa-venus text-pink-500 text-2xl mb-2"></i><p class="font-bold text-sm text-pink-700">PCOS / Hormonen</p></div>
-        <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 text-center"><i class="fas fa-brain text-orange-500 text-2xl mb-2"></i><p class="font-bold text-sm text-orange-700">Cortisol-gedreven</p></div>
-        <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-center"><i class="fas fa-candy-cane text-red-500 text-2xl mb-2"></i><p class="font-bold text-sm text-red-700">Insuline-gedreven</p></div>
-        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center"><i class="fas fa-pills text-blue-500 text-2xl mb-2"></i><p class="font-bold text-sm text-blue-700">Medicatie-gerelateerd</p></div>
-        <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-center"><i class="fas fa-heart text-green-500 text-2xl mb-2"></i><p class="font-bold text-sm text-green-700">Standaard Leefstijl</p></div>
-        <div class="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center flex flex-col items-center justify-center"><i class="fas fa-question-circle text-gray-400 text-2xl mb-2"></i><p class="font-bold text-sm text-gray-600">Welke bent u?</p></div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div class="bg-portal-50 rounded-2xl p-8 border border-portal-100 card-hover">
+          <div class="w-12 h-12 bg-portal-200 rounded-xl flex items-center justify-center mb-5"><i class="fas fa-seedling text-portal-700 text-xl"></i></div>
+          <h3 class="font-bold text-gray-900 mb-3">Een gezonde start</h3>
+          <p class="text-gray-500 leading-relaxed">Mensen die een gezonde start willen maken met een plan dat gebaseerd is op <strong class="text-gray-700">feiten, niet op rages</strong>.</p>
+        </div>
+        <div class="bg-amber-50 rounded-2xl p-8 border border-amber-100 card-hover">
+          <div class="w-12 h-12 bg-amber-200 rounded-xl flex items-center justify-center mb-5"><i class="fas fa-rotate text-amber-700 text-xl"></i></div>
+          <h3 class="font-bold text-gray-900 mb-3">Alles al geprobeerd</h3>
+          <p class="text-gray-500 leading-relaxed">Mensen die "alles al geprobeerd hebben" en nu de <strong class="text-gray-700">biologische oorzaak</strong> van hun stagnatie willen aanpakken.</p>
+        </div>
+        <div class="bg-teal-50 rounded-2xl p-8 border border-teal-100 card-hover">
+          <div class="w-12 h-12 bg-teal-200 rounded-xl flex items-center justify-center mb-5"><i class="fas fa-microscope text-teal-700 text-xl"></i></div>
+          <h3 class="font-bold text-gray-900 mb-3">Data-gedreven aanpak</h3>
+          <p class="text-gray-500 leading-relaxed">Iedereen die bereid is via data naar de kern van hun gezondheid te kijken voor een <strong class="text-gray-700">resultaat dat w&eacute;l blijft</strong>.</p>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- Disclaimer -->
+  <!-- DISCLAIMER -->
   <section id="disclaimer" class="py-16 bg-gray-50">
     <div class="max-w-3xl mx-auto px-4">
       <div class="bg-white rounded-2xl shadow-sm border p-8">
@@ -2368,33 +2450,33 @@ app.get('/portaal', (c) => {
           <p><strong>Professionele begeleiding:</strong> De analyse wordt altijd door uw therapeut Marc beoordeeld en besproken. Wijzigingen in medicatie, supplementen of voeding dienen altijd in overleg met uw behandelend arts plaats te vinden.</p>
           <p><strong>Geen vervanging:</strong> Dit portaal vervangt geen consult bij uw huisarts, specialist of andere zorgverlener. Bij acute klachten neem altijd contact op met uw huisarts of bel 112.</p>
           <p><strong>Gegevensbescherming:</strong> Uw antwoorden worden veilig opgeslagen en zijn uitsluitend toegankelijk voor u en uw therapeut. Wij verwerken uw gegevens conform de AVG (Algemene Verordening Gegevensbescherming). Uw gegevens worden niet gedeeld met derden.</p>
-          <p><strong>Wetenschappelijke basis:</strong> De vragenlijst en categorisatie zijn gebaseerd op orthomoleculaire en functionele geneeskunde principes. De lab-referentiewaarden zijn <em>optimale</em> ranges (niet standaard lab-ranges) en worden gebruikt voor preventieve gezondheidsoptimalisatie.</p>
+          <p><strong>Wetenschappelijke basis:</strong> De vragenlijst en categorisatie zijn gebaseerd op orthomoleculaire en functionele geneeskunde principes. De lab-referentiewaarden zijn <em>optimale</em> ranges en worden gebruikt voor preventieve gezondheidsoptimalisatie.</p>
           <p><strong>Supplementen:</strong> Aanbevolen supplementen zijn orthomoleculaire adviezen en geen geneesmiddelen. Raadpleeg bij twijfel altijd uw arts, met name bij zwangerschap, borstvoeding, of gebruik van medicijnen.</p>
         </div>
         <div class="mt-6 pt-4 border-t">
-          <p class="text-xs text-gray-400"><i class="fas fa-user-md mr-1"></i> Marc - Fysiotherapeut & Orthomoleculair Therapeut | Fysiopraktijk Zeist</p>
+          <p class="text-xs text-gray-400"><i class="fas fa-user-md mr-1"></i> Marc - Fysiotherapeut, Orthomoleculair Therapeut &amp; KPNI-specialist | Fysiopraktijk Zeist</p>
         </div>
       </div>
     </div>
   </section>
 
   <!-- CTA -->
-  <section class="py-12 bg-gradient-to-r from-portal-600 to-teal-700 text-white">
+  <section class="py-16 hero-pattern bg-gradient-to-br from-portal-700 via-portal-800 to-teal-900 text-white">
     <div class="max-w-3xl mx-auto px-4 text-center">
-      <h2 class="text-3xl font-black mb-4">Klaar om te beginnen?</h2>
-      <p class="opacity-90 mb-8">Heeft u een toegangscode ontvangen? Log in en vul de vragenlijst in.</p>
-      <a href="/portaal/inloggen" class="bg-white text-portal-700 px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition shadow-lg inline-block">
-        <i class="fas fa-sign-in-alt mr-2"></i>Inloggen met Toegangscode
+      <h2 class="text-3xl md:text-4xl font-black mb-4">Krijg grip op je biologie</h2>
+      <p class="text-white/80 text-lg mb-10 max-w-xl mx-auto">Start vandaag nog met jouw persoonlijke analyse. Heeft u een toegangscode ontvangen van uw therapeut?</p>
+      <a href="/portaal/inloggen" class="bg-white text-portal-700 px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition shadow-lg hover:shadow-xl inline-block">
+        <i class="fas fa-arrow-right mr-2"></i>Start mijn analyse
       </a>
-      <p class="text-sm opacity-75 mt-4">Nog geen toegangscode? Neem contact op met de praktijk.</p>
+      <p class="text-sm text-white/50 mt-6">Nog geen toegangscode? Neem contact op met Fysiopraktijk Zeist.</p>
     </div>
   </section>
 
-  <!-- Footer -->
-  <footer class="bg-gray-800 text-gray-400 py-8">
-    <div class="max-w-5xl mx-auto px-4 text-center">
-      <p class="text-sm">&copy; ${new Date().getFullYear()} Fysiopraktijk Zeist - Marc's Praktijk</p>
-      <p class="text-xs mt-2">Fysiotherapie & Orthomoleculaire Therapie | <a href="#disclaimer" class="underline hover:text-white">Disclaimer</a></p>
+  <!-- FOOTER -->
+  <footer class="bg-gray-900 text-gray-400 py-8">
+    <div class="max-w-6xl mx-auto px-4 text-center">
+      <p class="text-sm">&copy; ${new Date().getFullYear()} Fysiopraktijk Zeist</p>
+      <p class="text-xs mt-2">Fysiotherapie &bull; Orthomoleculaire Therapie &bull; KPNI | <a href="#disclaimer" class="underline hover:text-white transition">Disclaimer</a></p>
     </div>
   </footer>
 </body></html>`)
