@@ -301,20 +301,21 @@ app.post('/api/admin/2fa/enable', async (c) => {
   const valid = await verifyTOTP(secret, totp_code)
   if (!valid) return c.json({ error: 'Ongeldige code. Probeer opnieuw.' }, 400)
 
-  // Sla secret op in Supabase user metadata
+  // Sla secret op in admin_2fa tabel
   const session = activeSessions.get(sessionToken!)
-  const { SUPABASE_URL, SUPABASE_ANON_KEY } = env<EnvVars>(c)
-  
-  // Login opnieuw om een vers token te krijgen (we hebben het wachtwoord niet meer)
-  // Gebruik de admin API via service role — maar we hebben alleen anon key
-  // Alternatief: sla op in een aparte tabel
   const db = getSupabase(env<EnvVars>(c))
-  await db.from('admin_2fa').upsert({ 
+  const { error } = await db.from('admin_2fa').upsert({ 
     email: session!.email, 
     totp_secret: secret, 
     enabled: true,
-    created_at: new Date().toISOString()
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
   }, { onConflict: 'email' })
+
+  if (error) {
+    console.error('2FA enable error:', error)
+    return c.json({ error: 'Fout bij opslaan. Voer eerst de admin_2fa migratie uit in Supabase.' }, 500)
+  }
 
   return c.json({ success: true, message: '2FA is geactiveerd!' })
 })
@@ -347,9 +348,14 @@ app.get('/api/admin/2fa/status', async (c) => {
   
   const session = activeSessions.get(sessionToken!)
   const db = getSupabase(env<EnvVars>(c))
-  const { data } = await db.from('admin_2fa').select('enabled').eq('email', session!.email).single()
+  const { data, error } = await db.from('admin_2fa').select('enabled').eq('email', session!.email).single()
   
-  return c.json({ enabled: !!data?.enabled })
+  // Als de tabel niet bestaat, geef dat aan
+  if (error && (error.code === 'PGRST204' || error.message?.includes('admin_2fa') || error.code === '42P01')) {
+    return c.json({ enabled: false, table_missing: true })
+  }
+  
+  return c.json({ enabled: !!data?.enabled, table_missing: false })
 })
 
 // Logout
@@ -1124,6 +1130,38 @@ app.get('/admin/beveiliging', (c) => {
     <!-- 2FA Status -->
     <div id="security-content" class="hidden space-y-6">
       
+      <!-- Migratie waarschuwing -->
+      <div id="migration-warning" class="hidden bg-red-50 border-2 border-red-300 rounded-2xl p-6">
+        <h3 class="text-lg font-bold text-red-700 mb-2"><i class="fas fa-database mr-2"></i>Database migratie vereist</h3>
+        <p class="text-sm text-red-600 mb-3">De <code class="bg-red-100 px-1.5 py-0.5 rounded font-mono text-xs">admin_2fa</code> tabel bestaat nog niet in je Supabase database. Voer de migratie uit om 2FA te kunnen gebruiken:</p>
+        <ol class="text-sm text-red-600 space-y-1.5 list-decimal list-inside mb-3">
+          <li>Ga naar <a href="https://supabase.com/dashboard" target="_blank" class="underline font-semibold">Supabase Dashboard</a></li>
+          <li>Open je project → <strong>SQL Editor</strong></li>
+          <li>Kopieer de SQL hieronder en voer uit</li>
+          <li>Herlaad deze pagina</li>
+        </ol>
+        <details class="mt-2">
+          <summary class="cursor-pointer text-sm font-semibold text-red-700 hover:text-red-800">Toon SQL migratie</summary>
+          <pre class="mt-2 bg-gray-900 text-green-400 p-4 rounded-xl text-xs overflow-x-auto whitespace-pre">CREATE TABLE IF NOT EXISTS admin_2fa (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  email TEXT UNIQUE NOT NULL,
+  totp_secret TEXT NOT NULL,
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE admin_2fa ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Server can read 2fa" ON admin_2fa FOR SELECT TO anon USING (true);
+CREATE POLICY "Server can insert 2fa" ON admin_2fa FOR INSERT TO anon WITH CHECK (true);
+CREATE POLICY "Server can update 2fa" ON admin_2fa FOR UPDATE TO anon USING (true);
+CREATE POLICY "Server can delete 2fa" ON admin_2fa FOR DELETE TO anon USING (true);
+
+CREATE INDEX IF NOT EXISTS idx_admin_2fa_email ON admin_2fa(email);</pre>
+        </details>
+      </div>
+
       <!-- 2FA Status Card -->
       <div class="bg-white rounded-2xl shadow-sm border p-6">
         <div class="flex items-start justify-between">
@@ -1256,6 +1294,12 @@ app.get('/admin/beveiliging', (c) => {
         
         document.getElementById('loading').classList.add('hidden');
         document.getElementById('security-content').classList.remove('hidden');
+
+        // Toon migratie-waarschuwing als tabel ontbreekt
+        const migWarning = document.getElementById('migration-warning');
+        if (data.table_missing && migWarning) {
+          migWarning.classList.remove('hidden');
+        }
 
         if (data.enabled) {
           document.getElementById('2fa-badge').textContent = 'ACTIEF';
