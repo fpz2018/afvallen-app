@@ -1551,13 +1551,6 @@ app.get('/patient/:id', (c) => {
         }
       } catch(e) {}
     }
-      if (!confirm('Weet je zeker dat je "' + name + '" definitief wilt verwijderen?\\n\\nAlle bijbehorende data (assessments, lab-testen, protocollen, progressie) wordt ook verwijderd.\\n\\nDit kan NIET ongedaan worden gemaakt!')) return;
-      try {
-        const res = await fetch('/api/patients/' + patientId + '/permanent', { method: 'DELETE' });
-        if (res.ok) { window.location.href = '/'; }
-        else { const err = await res.json(); alert('Fout: ' + (err.error || 'Onbekend')); }
-      } catch(e) { alert('Fout: ' + e.message); }
-    }
 
     loadProfile();
     checkPortalCode();
