@@ -148,6 +148,18 @@ app.get('/api/assessments/:id', async (c) => {
   return c.json(data)
 })
 
+// Get all assessments for a patient (history)
+app.get('/api/assessments/patient/:patientId', async (c) => {
+  const db = getSupabase(c.env)
+  const { data, error } = await db
+    .from('assessments')
+    .select('*')
+    .eq('patient_id', c.req.param('patientId'))
+    .order('created_at', { ascending: false })
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
 // =====================================================
 // API: LAB TESTS
 // =====================================================
@@ -801,6 +813,25 @@ app.get('/patient/:id', (c) => {
         // Header
         html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold">'+p.first_name+' '+p.last_name+'</h2><p class="opacity-90">'+age+' jaar | '+genderLabel+' | '+( p.email||'Geen email')+'</p></div><div class="flex gap-2">'+(lastAssessment?'':'<a href="/triage/'+p.id+'" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>')+'</div></div></div><div class="p-6"><div class="flex flex-wrap gap-2">'+( catTags||'<span class="text-gray-400">Nog geen assessment</span>')+'</div></div></div>';
 
+        // Assessment Historie
+        const assessments = (p.assessments||[]).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="p-4 border-b flex items-center justify-between"><h3 class="font-bold text-lg"><i class="fas fa-clipboard-list mr-2 text-blue-600"></i>Assessment Historie ('+assessments.length+')</h3>'+(assessments.length?'<a href="/triage/'+p.id+'" class="bg-blue-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-blue-700"><i class="fas fa-plus mr-1"></i>Nieuwe Triage</a>':'')+'</div><div class="p-4">';
+        if (!assessments.length) {
+          html += '<div class="text-center py-6"><i class="fas fa-clipboard text-4xl text-gray-300 mb-3"></i><p class="text-gray-400 mb-3">Nog geen assessments afgenomen</p><a href="/triage/'+p.id+'" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700"><i class="fas fa-clipboard-check mr-1"></i>Start eerste triage</a></div>';
+        } else {
+          html += '<div class="space-y-3">';
+          assessments.forEach((a, idx) => {
+            const aCats = (a.categories||[]);
+            const aCatTags = aCats.map(c=>'<span class="px-2 py-0.5 rounded-full text-xs font-semibold '+(catColors[c.id]||'bg-gray-100 text-gray-700')+'">'+(categoryNames[c.id]||c.name)+'</span>').join(' ');
+            const riskBadge = aCats.some(c=>c.risk==='high') ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">HOOG RISICO</span>' : aCats.some(c=>c.risk==='medium') ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">GEMIDDELD</span>' : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">LAAG</span>';
+            const date = new Date(a.created_at).toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+            const typeLabel = {quick:'Quick Triage',standard:'Standard Assessment',deep:'Deep Dive'}[a.assessment_type]||a.assessment_type;
+            html += '<a href="/assessment/'+p.id+'/'+a.id+'" class="block border rounded-xl p-4 hover:shadow-md transition card-hover '+(idx===0?'border-blue-200 bg-blue-50/30':'border-gray-200')+'"><div class="flex items-start justify-between"><div class="flex-1"><div class="flex items-center gap-2 mb-1"><span class="font-bold text-gray-800">'+typeLabel+'</span>'+(idx===0?'<span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 font-semibold">Meest Recent</span>':'')+'</div><p class="text-sm text-gray-500 mb-2"><i class="far fa-calendar mr-1"></i>'+date+'</p><div class="flex flex-wrap gap-1">'+aCatTags+'</div></div><div class="flex flex-col items-end gap-2">'+riskBadge+'<span class="text-primary-600 text-sm font-semibold"><i class="fas fa-eye mr-1"></i>Bekijk details</span></div></div></a>';
+          });
+          html += '</div>';
+        }
+        html += '</div></div>';
+
         // Tabs content
         html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">';
 
@@ -986,6 +1017,188 @@ app.get('/lab-entry/:patientId/:labId', (c) => {
     }
 
     loadLabForm();
+  </script>
+</body></html>`)
+})
+
+// ASSESSMENT DETAIL PAGE - Volledige vragenlijst teruglezen
+app.get('/assessment/:patientId/:assessmentId', (c) => {
+  const patientId = c.req.param('patientId')
+  const assessmentId = c.req.param('assessmentId')
+  return c.html(`${htmlHead}
+<body class="bg-gray-50 min-h-screen">
+  ${navBar}
+  <main class="max-w-4xl mx-auto px-4 py-8">
+    <div class="mb-6"><a href="/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
+    <div id="assessment-detail"><p class="text-center py-12 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Assessment laden...</p></div>
+  </main>
+  <script>
+    const patientId = '${patientId}';
+    const assessmentId = '${assessmentId}';
+
+    const questionLabels = {
+      gender: { text: 'Wat is uw geslacht?', indicator: 'Basis', icon: 'fa-venus-mars' },
+      age: { text: 'Wat is uw leeftijd?', indicator: 'Basis', icon: 'fa-birthday-cake' },
+      duration_trying: { text: 'Hoe lang probeert u al af te vallen?', indicator: 'Metabole weerstand', icon: 'fa-clock' },
+      weight_loss_success: { text: 'Valt u af ondanks calorierestrictie en beweging?', indicator: 'Metabole weerstand', icon: 'fa-weight' },
+      fatigue_cold_dry: { text: 'Bent u vaak moe, heeft u het vaak koud en heeft u droge huid?', indicator: 'Schildklier', icon: 'fa-thermometer-half' },
+      menstrual_regularity: { text: 'Is uw menstruatiecyclus regelmatig?', indicator: 'PCOS/Hormonen', icon: 'fa-venus' },
+      stress_frequency: { text: 'Ervaart u regelmatig stress of angst?', indicator: 'Cortisol', icon: 'fa-brain' },
+      sleep_quality: { text: 'Hoe is uw slaap?', indicator: 'Cortisol/Leptine', icon: 'fa-moon' },
+      medication_use: { text: 'Welke medicijnen gebruikt u?', indicator: 'Medicatie', icon: 'fa-pills' },
+      statin_side_effects: { text: 'Heeft u last van spierpijn of vermoeidheid bij statinegebruik?', indicator: 'CoQ10', icon: 'fa-heartbeat' },
+      hunger_after_meal: { text: 'Heeft u honger kort na een maaltijd (< 2 uur)?', indicator: 'Insuline', icon: 'fa-utensils' },
+      fat_distribution: { text: 'Waar zit het meeste vet bij u?', indicator: 'Hormonale distributie', icon: 'fa-male' },
+      sugar_cravings: { text: 'Heeft u sterke cravings voor suiker/zoet?', indicator: 'Insuline/Serotonine', icon: 'fa-candy-cane' },
+      menopause_status: { text: 'Bent u in de overgang of postmenopauzaal?', indicator: 'Oestrogeen', icon: 'fa-female' },
+      diagnosed_conditions: { text: 'Heeft u een diagnose van:', indicator: 'Pathologie', icon: 'fa-stethoscope' }
+    };
+
+    const answerLabels = {
+      gender: { male:'Man', female:'Vrouw', other:'Anders' },
+      duration_trying: { less_3_months:'Minder dan 3 maanden', '3_6_months':'3-6 maanden', '6_12_months':'6-12 maanden', over_1_year:'Meer dan 1 jaar' },
+      weight_loss_success: { easy:'Ja, moeiteloos', slow:'Langzaam maar wel', barely:'Nauwelijks / plateau', none:'Nee, geen resultaat' },
+      fatigue_cold_dry: { yes:'Ja, regelmatig tot dagelijks', sometimes:'Soms, maar niet altijd', no:'Nee, dit herken ik niet' },
+      menstrual_regularity: { yes:'Ja, regelmatig', irregular:'Onregelmatig', no:'Nee', na:'Niet van toepassing' },
+      stress_frequency: { daily:'Dagelijks', weekly:'Wekelijks', rarely:'Zelden', never:'Nooit' },
+      sleep_quality: { excellent:'Uitstekend (7-9 uur doorslapen)', fair:'Redelijk (wordt soms wakker)', moderate:'Matig (moeite met inslapen)', poor:'Slecht (< 6 uur of zeer onrustig)' },
+      medication_use: { none:'Geen medicijnen', thyroid_med:'Schildkliermedicatie', statins:'Statines (cholesterol)', diabetes_med:'Diabetesmedicatie', antidepressants:'Antidepressiva', beta_blockers:'Betablokkers', other:'Anders' },
+      statin_side_effects: { yes:'Ja', no:'Nee', no_statins:'Gebruik geen statines' },
+      hunger_after_meal: { always:'Altijd', often:'Vaak', sometimes:'Soms', never:'Nooit' },
+      fat_distribution: { belly:'Buik (visceraal)', hips_legs:'Heupen/benen', even:'Gelijkmatig verdeeld', unsure:'Onzeker' },
+      sugar_cravings: { daily:'Dagelijks', regularly:'Regelmatig', rarely:'Zelden', never:'Nooit' },
+      menopause_status: { yes:'Ja', no:'Nee', unsure:'Weet niet', na:'Niet van toepassing' },
+      diagnosed_conditions: { diabetes:'Diabetes type 2', pcos:'PCOS', hashimoto:'Hashimoto', thyroid:'Andere schildklieraandoening', none:'Geen van bovenstaande' }
+    };
+
+    const categoryNames = {metabolic_resistance:'Metabole Weerstand',thyroid:'Schildklier',hormonal:'PCOS/Hormonen',cortisol:'Cortisol',insulin:'Insuline',medication:'Medicatie',standard:'Standaard'};
+    const catColors = {metabolic_resistance:'bg-red-100 text-red-700 border-red-300',thyroid:'bg-indigo-100 text-indigo-700 border-indigo-300',hormonal:'bg-pink-100 text-pink-700 border-pink-300',cortisol:'bg-orange-100 text-orange-700 border-orange-300',insulin:'bg-red-100 text-red-700 border-red-300',medication:'bg-blue-100 text-blue-700 border-blue-300',standard:'bg-green-100 text-green-700 border-green-300'};
+    const riskColors = {high:'bg-red-50 border-red-500',medium:'bg-orange-50 border-orange-500',low:'bg-green-50 border-green-500'};
+    const riskLabels = {high:'HOOG RISICO',medium:'GEMIDDELD RISICO',low:'LAAG RISICO'};
+    const riskTextColors = {high:'text-red-700',medium:'text-orange-700',low:'text-green-700'};
+
+    // Color coding for answer severity
+    function getAnswerSeverity(qId, answer) {
+      const severeAnswers = {
+        weight_loss_success: ['none','barely'],
+        fatigue_cold_dry: ['yes'],
+        menstrual_regularity: ['irregular','no'],
+        stress_frequency: ['daily'],
+        sleep_quality: ['poor'],
+        statin_side_effects: ['yes'],
+        hunger_after_meal: ['always','often'],
+        sugar_cravings: ['daily','regularly'],
+        duration_trying: ['over_1_year','6_12_months']
+      };
+      const moderateAnswers = {
+        weight_loss_success: ['slow'],
+        fatigue_cold_dry: ['sometimes'],
+        stress_frequency: ['weekly'],
+        sleep_quality: ['moderate','fair'],
+        hunger_after_meal: ['sometimes'],
+        sugar_cravings: ['rarely'],
+        duration_trying: ['3_6_months']
+      };
+      if (severeAnswers[qId] && (Array.isArray(answer) ? answer.some(a=>severeAnswers[qId].includes(a)) : severeAnswers[qId].includes(answer))) return 'severe';
+      if (moderateAnswers[qId] && (Array.isArray(answer) ? answer.some(a=>moderateAnswers[qId].includes(a)) : moderateAnswers[qId].includes(answer))) return 'moderate';
+      return 'normal';
+    }
+
+    async function loadAssessmentDetail() {
+      try {
+        const [patientRes, assessmentRes] = await Promise.all([
+          fetch('/api/patients/'+patientId),
+          fetch('/api/assessments/'+assessmentId)
+        ]);
+        const patient = await patientRes.json();
+        const assessment = await assessmentRes.json();
+        const responses = assessment.responses || {};
+        const categories = assessment.categories || [];
+        const riskScores = assessment.risk_scores || {};
+        const typeLabel = {quick:'Quick Triage',standard:'Standard Assessment',deep:'Deep Dive'}[assessment.assessment_type]||assessment.assessment_type;
+        const date = new Date(assessment.created_at).toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+
+        let html = '';
+
+        // Header
+        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-blue-600 to-cyan-600 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold"><i class="fas fa-clipboard-list mr-2"></i>'+typeLabel+': '+patient.first_name+' '+patient.last_name+'</h2><p class="opacity-90 mt-1"><i class="far fa-calendar mr-1"></i> '+date+'</p></div><div class="flex gap-2"><a href="/results/'+patientId+'/'+assessmentId+'" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-chart-bar mr-1"></i>Resultaten</a><button onclick="window.print()" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-print mr-1"></i>Print</button></div></div></div>';
+
+        // Categorisering samenvatting
+        html += '<div class="p-6 border-b"><h3 class="font-bold text-lg mb-3"><i class="fas fa-tags mr-2 text-primary-600"></i>Categorisering</h3><div class="flex flex-wrap gap-2 mb-4">';
+        categories.forEach(cat => {
+          html += '<div class="border rounded-lg px-4 py-2 '+(catColors[cat.id]||'bg-gray-100 text-gray-700')+' flex items-center gap-2"><i class="fas '+cat.icon+'"></i><span class="font-bold">'+(categoryNames[cat.id]||cat.name)+'</span><span class="text-xs opacity-75">('+riskLabels[cat.risk]+')</span></div>';
+        });
+        html += '</div>';
+
+        // Risk scores bar chart
+        html += '<div class="bg-gray-50 rounded-lg p-4"><p class="text-sm font-bold text-gray-600 mb-3">Risico Scores per Categorie</p><div class="space-y-2">';
+        const allCatNames = {metabolic_resistance:'Metabole Weerstand',thyroid:'Schildklier',hormonal:'PCOS/Hormonen',cortisol:'Cortisol',insulin:'Insuline',medication:'Medicatie',standard:'Standaard'};
+        Object.entries(riskScores).sort((a,b)=>b[1]-a[1]).forEach(([key, score]) => {
+          const maxPossible = 10;
+          const pct = Math.min((score/maxPossible)*100, 100);
+          const barColor = score >= 6 ? 'bg-red-500' : score >= 4 ? 'bg-orange-500' : score >= 3 ? 'bg-yellow-500' : 'bg-green-500';
+          html += '<div class="flex items-center gap-3"><span class="text-xs text-gray-600 w-36 text-right">'+(allCatNames[key]||key)+'</span><div class="flex-1 bg-gray-200 rounded-full h-4 relative"><div class="h-4 rounded-full '+barColor+' transition-all" style="width:'+pct+'%"></div></div><span class="text-xs font-bold w-8 text-right">'+score+'</span></div>';
+        });
+        html += '</div></div></div>';
+
+        // Volledige vragenlijst
+        html += '<div class="p-6"><h3 class="font-bold text-lg mb-4"><i class="fas fa-list-ol mr-2 text-green-600"></i>Volledige Antwoorden ('+Object.keys(responses).length+' vragen)</h3><div class="space-y-3">';
+
+        const questionOrder = ["gender","age","duration_trying","weight_loss_success","fatigue_cold_dry","menstrual_regularity","stress_frequency","sleep_quality","medication_use","statin_side_effects","hunger_after_meal","fat_distribution","sugar_cravings","menopause_status","diagnosed_conditions"];
+
+        questionOrder.forEach((qId, idx) => {
+          if (responses[qId] === undefined && responses[qId] === null) return;
+          const qInfo = questionLabels[qId] || { text: qId, indicator: 'Overig', icon: 'fa-question' };
+          const rawAnswer = responses[qId];
+          const labels = answerLabels[qId] || {};
+
+          let displayAnswer = '';
+          if (Array.isArray(rawAnswer)) {
+            displayAnswer = rawAnswer.map(a => labels[a] || a).join(', ');
+          } else if (typeof rawAnswer === 'number') {
+            displayAnswer = String(rawAnswer);
+            if (qId === 'age') displayAnswer += ' jaar';
+          } else {
+            displayAnswer = labels[rawAnswer] || rawAnswer || '-';
+          }
+
+          const severity = getAnswerSeverity(qId, rawAnswer);
+          const severityStyles = {
+            severe: 'border-l-4 border-red-500 bg-red-50/50',
+            moderate: 'border-l-4 border-orange-400 bg-orange-50/30',
+            normal: 'border-l-4 border-gray-200'
+          };
+          const severityDot = {
+            severe: '<span class="w-2 h-2 rounded-full bg-red-500 inline-block mr-1"></span>',
+            moderate: '<span class="w-2 h-2 rounded-full bg-orange-400 inline-block mr-1"></span>',
+            normal: ''
+          };
+
+          html += '<div class="rounded-lg p-4 '+severityStyles[severity]+' transition hover:shadow-sm"><div class="flex items-start gap-3"><div class="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0"><span class="text-xs font-bold text-primary-700">'+(idx+1)+'</span></div><div class="flex-1"><div class="flex items-center gap-2 mb-1"><span class="text-xs font-semibold px-2 py-0.5 rounded bg-gray-100 text-gray-600"><i class="fas '+qInfo.icon+' mr-1"></i>'+qInfo.indicator+'</span></div><p class="font-medium text-gray-800 mb-1">'+qInfo.text+'</p><p class="text-gray-700 font-semibold">'+severityDot[severity]+displayAnswer+'</p></div></div></div>';
+        });
+
+        html += '</div></div>';
+
+        // Triggers per categorie
+        if (categories.length) {
+          html += '<div class="p-6 border-t"><h3 class="font-bold text-lg mb-4"><i class="fas fa-exclamation-triangle mr-2 text-yellow-600"></i>Gevonden Triggers per Categorie</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-4">';
+          categories.forEach(cat => {
+            html += '<div class="border-l-4 rounded-lg p-4 '+riskColors[cat.risk]+'"><p class="font-bold '+riskTextColors[cat.risk]+' mb-2"><i class="fas '+cat.icon+' mr-2"></i>'+(categoryNames[cat.id]||cat.name)+' - '+riskLabels[cat.risk]+'</p><ul class="text-sm space-y-1 ml-4 list-disc '+riskTextColors[cat.risk]+'">'+cat.triggers.map(t=>'<li>'+t+'</li>').join('')+'</ul></div>';
+          });
+          html += '</div></div>';
+        }
+
+        // Action buttons
+        html += '<div class="p-6 border-t bg-gray-50 rounded-b-xl flex flex-wrap gap-3"><a href="/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-user mr-2"></i>Patiëntprofiel</a><a href="/results/'+patientId+'/'+assessmentId+'" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-chart-bar mr-2"></i>Resultaten & Lab</a><button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-white"><i class="fas fa-print mr-2"></i>Print Assessment</button></div>';
+
+        html += '</div>';
+        document.getElementById('assessment-detail').innerHTML = html;
+      } catch(e) {
+        document.getElementById('assessment-detail').innerHTML = '<p class="text-red-500 text-center py-12">Fout bij laden: '+e.message+'</p>';
+      }
+    }
+
+    loadAssessmentDetail();
   </script>
 </body></html>`)
 })
