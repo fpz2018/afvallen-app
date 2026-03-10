@@ -1,3 +1,18 @@
+// Load environment variables from .dev.vars file
+const fs = require('fs')
+const path = require('path')
+
+const envVars = {}
+try {
+  const devVars = fs.readFileSync(path.join(__dirname, '.dev.vars'), 'utf8')
+  devVars.split('\n').forEach(line => {
+    const [key, ...valueParts] = line.split('=')
+    if (key && valueParts.length) {
+      envVars[key.trim()] = valueParts.join('=').trim()
+    }
+  })
+} catch(e) { /* .dev.vars not found, use env */ }
+
 module.exports = {
   apps: [
     {
@@ -7,8 +22,7 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         PORT: 3000,
-        SUPABASE_URL: 'https://iswjoqoygbptgbednmhf.supabase.co',
-        SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlzd2pvcW95Z2JwdGdiZWRubWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxMzY2NjksImV4cCI6MjA4ODcxMjY2OX0.2KQB0xMRAikvhVCu-Uc8hyNWFtta7imguxZELaJ0jus'
+        ...envVars
       },
       watch: false,
       instances: 1,

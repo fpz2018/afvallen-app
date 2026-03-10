@@ -10,6 +10,8 @@ import { generateProtocol } from './lib/protocol-engine'
 type EnvVars = {
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
+  STRIPE_SECRET_KEY: string
+  STRIPE_PUBLISHABLE_KEY: string
 }
 
 const app = new Hono()
@@ -411,11 +413,12 @@ app.use('/admin', async (c, next) => {
 app.use('/api/*', async (c, next) => {
   const path = c.req.path
   
-  // Deze endpoints zijn publiek (portal + auth)
+  // Deze endpoints zijn publiek (portal + auth + payments)
   if (path.startsWith('/api/admin/login') ||
       path.startsWith('/api/admin/verify-2fa') ||
       path.startsWith('/api/admin/logout') ||
-      path.startsWith('/api/portal/')) {
+      path.startsWith('/api/portal/') ||
+      path.startsWith('/api/payments/')) {
     return next()
   }
 
@@ -3050,6 +3053,205 @@ app.get('/admin/protocol/:patientId/:protocolId', (c) => {
 // PATIËNTENPORTAAL - APART GEDEELTE
 // =====================================================
 
+// =====================================================
+// STRIPE PAYMENT ENDPOINTS
+// =====================================================
+
+// Stripe REST API helper
+async function stripeRequest(secretKey: string, endpoint: string, params: Record<string, string>) {
+  const body = new URLSearchParams(params).toString()
+  const res = await fetch(`https://api.stripe.com/v1${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${secretKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body
+  })
+  return res.json() as Promise<any>
+}
+
+async function stripeGet(secretKey: string, endpoint: string) {
+  const res = await fetch(`https://api.stripe.com/v1${endpoint}`, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${secretKey}` },
+  })
+  return res.json() as Promise<any>
+}
+
+// Payment types
+const PAYMENT_TYPES = {
+  analysis: { 
+    name: 'Persoonlijke Gezondheidsanalyse', 
+    amount: 995, // €9,95 in centen
+    description: 'Volledige persoonlijke analyse + eerste advies + lab-aanbeveling'
+  },
+  protocol: {
+    name: 'Persoonlijk Protocol',
+    minAmount: 495,  // €4,95
+    maxAmount: 2995,  // €29,95
+    description: 'Persoonlijk supplement- en voedingsschema op maat'
+  }
+}
+
+// Create Stripe Checkout Session voor analyse (vast bedrag €9,95)
+app.post('/api/payments/create-checkout', async (c) => {
+  const { STRIPE_SECRET_KEY } = env<EnvVars>(c)
+  const db = getSupabase(env<EnvVars>(c))
+  const body = await c.req.json()
+  const { patient_id, payment_type, amount, portal_code } = body
+
+  if (!patient_id || !payment_type) {
+    return c.json({ error: 'patient_id en payment_type zijn verplicht' }, 400)
+  }
+
+  // Bepaal bedrag
+  let paymentAmount: number
+  let paymentName: string
+  let paymentDesc: string
+
+  if (payment_type === 'analysis') {
+    paymentAmount = PAYMENT_TYPES.analysis.amount
+    paymentName = PAYMENT_TYPES.analysis.name
+    paymentDesc = PAYMENT_TYPES.analysis.description
+  } else if (payment_type === 'protocol') {
+    const customAmount = parseInt(amount)
+    if (!customAmount || customAmount < PAYMENT_TYPES.protocol.minAmount || customAmount > PAYMENT_TYPES.protocol.maxAmount) {
+      return c.json({ error: `Bedrag moet tussen €${(PAYMENT_TYPES.protocol.minAmount/100).toFixed(2)} en €${(PAYMENT_TYPES.protocol.maxAmount/100).toFixed(2)} zijn` }, 400)
+    }
+    paymentAmount = customAmount
+    paymentName = PAYMENT_TYPES.protocol.name
+    paymentDesc = PAYMENT_TYPES.protocol.description
+  } else {
+    return c.json({ error: 'Ongeldig payment_type' }, 400)
+  }
+
+  // Haal patiënt info op
+  const { data: patient } = await db
+    .from('patients')
+    .select('email, first_name, last_name')
+    .eq('id', patient_id)
+    .single()
+
+  if (!patient) {
+    return c.json({ error: 'Patiënt niet gevonden' }, 404)
+  }
+
+  // Bepaal base URL
+  const origin = c.req.header('origin') || c.req.header('referer')?.replace(/\/[^/]*$/, '') || 'https://afvallen.netlify.app'
+
+  try {
+    // Maak Stripe Checkout Session
+    const session = await stripeRequest(STRIPE_SECRET_KEY, '/checkout/sessions', {
+      'payment_method_types[0]': 'ideal',
+      'payment_method_types[1]': 'card',
+      'mode': 'payment',
+      'line_items[0][price_data][currency]': 'eur',
+      'line_items[0][price_data][unit_amount]': paymentAmount.toString(),
+      'line_items[0][price_data][product_data][name]': paymentName,
+      'line_items[0][price_data][product_data][description]': paymentDesc,
+      'line_items[0][quantity]': '1',
+      'customer_email': patient.email,
+      'success_url': `${origin}/betaling-succes?session_id={CHECKOUT_SESSION_ID}&type=${payment_type}`,
+      'cancel_url': `${origin}/menu`,
+      'metadata[patient_id]': patient_id,
+      'metadata[payment_type]': payment_type,
+      'metadata[portal_code]': portal_code || '',
+      'locale': 'nl',
+    })
+
+    if (session.error) {
+      console.error('Stripe error:', session.error)
+      return c.json({ error: 'Betaling kon niet worden aangemaakt. Probeer opnieuw.' }, 500)
+    }
+
+    // Sla payment record op in Supabase
+    await db.from('payments').insert([{
+      patient_id,
+      stripe_session_id: session.id,
+      payment_type,
+      amount: paymentAmount,
+      currency: 'eur',
+      status: 'pending',
+    }])
+
+    return c.json({ 
+      checkout_url: session.url,
+      session_id: session.id
+    })
+
+  } catch (err) {
+    console.error('Payment error:', err)
+    return c.json({ error: 'Er ging iets mis met de betaling. Probeer opnieuw.' }, 500)
+  }
+})
+
+// Verify payment status
+app.get('/api/payments/verify/:sessionId', async (c) => {
+  const { STRIPE_SECRET_KEY } = env<EnvVars>(c)
+  const db = getSupabase(env<EnvVars>(c))
+  const sessionId = c.req.param('sessionId')
+
+  try {
+    const session = await stripeGet(STRIPE_SECRET_KEY, `/checkout/sessions/${sessionId}`)
+
+    if (session.error) {
+      return c.json({ error: 'Sessie niet gevonden' }, 404)
+    }
+
+    const isPaid = session.payment_status === 'paid'
+
+    // Update payment record in Supabase
+    if (isPaid) {
+      await db.from('payments').update({
+        status: 'paid',
+        stripe_payment_intent: session.payment_intent,
+        paid_at: new Date().toISOString()
+      }).eq('stripe_session_id', sessionId)
+    }
+
+    return c.json({
+      paid: isPaid,
+      payment_type: session.metadata?.payment_type,
+      patient_id: session.metadata?.patient_id,
+      amount: session.amount_total,
+      customer_email: session.customer_email
+    })
+
+  } catch (err) {
+    console.error('Verify error:', err)
+    return c.json({ error: 'Kon betaling niet verifiëren' }, 500)
+  }
+})
+
+// Check payment status voor een patiënt
+app.get('/api/payments/status/:patientId', async (c) => {
+  const db = getSupabase(env<EnvVars>(c))
+  const patientId = c.req.param('patientId')
+
+  const { data: payments } = await db
+    .from('payments')
+    .select('*')
+    .eq('patient_id', patientId)
+    .eq('status', 'paid')
+    .order('created_at', { ascending: false })
+
+  const analysisPaid = payments?.some((p: any) => p.payment_type === 'analysis') || false
+  const protocolPaid = payments?.some((p: any) => p.payment_type === 'protocol') || false
+
+  return c.json({
+    analysis_paid: analysisPaid,
+    protocol_paid: protocolPaid,
+    payments: payments || []
+  })
+})
+
+// Get Stripe publishable key (voor frontend)
+app.get('/api/payments/config', (c) => {
+  const { STRIPE_PUBLISHABLE_KEY } = env<EnvVars>(c)
+  return c.json({ publishableKey: STRIPE_PUBLISHABLE_KEY })
+})
+
 // Portal HTML head (eigen branding, geen therapeut-navigatie)
 const portalHead = `<!DOCTYPE html>
 <html lang="nl">
@@ -3275,6 +3477,46 @@ app.post('/api/portal/verify-code', async (c) => {
     last_name: data.last_name,
     gender: data.gender,
     date_of_birth: data.date_of_birth
+  })
+})
+
+// Portal status check (voor menu)
+app.get('/api/portal/check-status', async (c) => {
+  const db = getSupabase(env<EnvVars>(c))
+  const code = c.req.query('code')
+
+  if (!code) return c.json({ error: 'Code ontbreekt' }, 400)
+
+  // Zoek patiënt
+  const { data: patient } = await db
+    .from('patients')
+    .select('id')
+    .eq('portal_code', code.toUpperCase())
+    .eq('status', 'active')
+    .single()
+
+  if (!patient) return c.json({ has_assessment: false, review_status: null, has_protocol: false })
+
+  // Check assessment
+  const { data: assessment } = await db
+    .from('assessments')
+    .select('id, review_status')
+    .eq('patient_id', patient.id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single()
+
+  // Check protocol
+  const { data: protocols } = await db
+    .from('supplement_protocols')
+    .select('id')
+    .eq('patient_id', patient.id)
+    .limit(1)
+
+  return c.json({
+    has_assessment: !!assessment,
+    review_status: assessment?.review_status || null,
+    has_protocol: (protocols && protocols.length > 0) || false
   })
 })
 
@@ -4191,6 +4433,414 @@ app.get('/inloggen', (c) => {
 </body></html>`)
 })
 
+// BETAALPAGINA - Analyse (€9,95)
+app.get('/betalen/analyse', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-lg mx-auto px-4 py-12">
+    <div class="bg-white rounded-2xl shadow-lg overflow-hidden fade-in">
+      <div class="bg-gradient-to-r from-portal-600 to-blue-600 text-white p-8 text-center">
+        <div class="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-microscope text-3xl"></i>
+        </div>
+        <h1 class="text-2xl font-black">Persoonlijke Analyse</h1>
+        <p class="opacity-90 mt-2">Op basis van jouw unieke antwoorden</p>
+      </div>
+
+      <div class="p-8">
+        <div class="space-y-4 mb-8">
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Persoonlijke categorisatie</p>
+              <p class="text-sm text-gray-500">Inzicht in jouw specifieke stofwisselingstype</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Beoordeling door therapeut</p>
+              <p class="text-sm text-gray-500">Marc beoordeelt jouw resultaten persoonlijk</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Lab-onderzoek aanbeveling</p>
+              <p class="text-sm text-gray-500">Gerichte bloedwaarden om te laten onderzoeken</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Eerste advies</p>
+              <p class="text-sm text-gray-500">Direct toepasbare tips voor jouw situatie</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-portal-50 rounded-2xl p-6 text-center mb-6">
+          <p class="text-sm text-portal-600 font-semibold mb-1">Eenmalig bedrag</p>
+          <div class="flex items-baseline justify-center gap-1">
+            <span class="text-sm text-gray-500">€</span>
+            <span class="text-5xl font-black text-gray-800">9</span>
+            <span class="text-2xl font-bold text-gray-800">,95</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-2">Betaal veilig met iDEAL of creditcard</p>
+        </div>
+
+        <button id="pay-btn" onclick="startPayment()" class="w-full bg-portal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition shadow-lg shadow-portal-200">
+          <i class="fas fa-lock mr-2"></i>Afrekenen — €9,95
+        </button>
+
+        <div class="flex items-center justify-center gap-6 mt-6 opacity-60">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e9/IDEAL_Logo.svg/64px-IDEAL_Logo.svg.png" alt="iDEAL" class="h-6">
+          <i class="fab fa-cc-visa text-2xl text-gray-400"></i>
+          <i class="fab fa-cc-mastercard text-2xl text-gray-400"></i>
+          <i class="fas fa-shield-alt text-xl text-gray-400"></i>
+        </div>
+
+        <p class="text-xs text-center text-gray-400 mt-4">
+          <i class="fas fa-lock mr-1"></i>Beveiligde betaling via Stripe. Je gegevens zijn veilig.
+        </p>
+      </div>
+    </div>
+
+    <div class="text-center mt-6">
+      <a href="/menu" class="text-sm text-gray-400 hover:text-gray-600"><i class="fas fa-arrow-left mr-1"></i>Terug naar menu</a>
+    </div>
+  </main>
+
+  <script>
+    const portalCode = sessionStorage.getItem('portal_code');
+    const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+    if (!portalCode) { window.location.href = '/inloggen'; }
+
+    async function startPayment() {
+      const btn = document.getElementById('pay-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Moment geduld...';
+
+      try {
+        const res = await fetch('/api/payments/create-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patient_id: patientInfo.id,
+            payment_type: 'analysis',
+            portal_code: portalCode
+          })
+        });
+        const data = await res.json();
+        if (data.checkout_url) {
+          window.location.href = data.checkout_url;
+        } else {
+          alert(data.error || 'Er ging iets mis. Probeer opnieuw.');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-lock mr-2"></i>Afrekenen — €9,95';
+        }
+      } catch(err) {
+        alert('Verbindingsfout. Probeer opnieuw.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-lock mr-2"></i>Afrekenen — €9,95';
+      }
+    }
+  </script>
+</body></html>`)
+})
+
+// BETAALPAGINA - Protocol (slider €4,95 — €29,95)
+app.get('/betalen/protocol', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-lg mx-auto px-4 py-12">
+    <div class="bg-white rounded-2xl shadow-lg overflow-hidden fade-in">
+      <div class="bg-gradient-to-r from-emerald-500 to-teal-600 text-white p-8 text-center">
+        <div class="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-clipboard-list text-3xl"></i>
+        </div>
+        <h1 class="text-2xl font-black">Jouw Persoonlijke Protocol</h1>
+        <p class="opacity-90 mt-2">Op maat gemaakt door je therapeut</p>
+      </div>
+
+      <div class="p-8">
+        <div class="space-y-4 mb-8">
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Persoonlijk supplementschema</p>
+              <p class="text-sm text-gray-500">Afgestemd op jouw labwaarden en klachten</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Voedingsadvies op maat</p>
+              <p class="text-sm text-gray-500">Specifiek voor jouw stofwisselingstype</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Leefstijlaanpassingen</p>
+              <p class="text-sm text-gray-500">Slaap, stress, beweging — op jou afgestemd</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3">
+            <div class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <i class="fas fa-check text-green-600 text-sm"></i>
+            </div>
+            <div>
+              <p class="font-semibold text-gray-800">Follow-up moment</p>
+              <p class="text-sm text-gray-500">Evaluatie van jouw voortgang</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- SLIDER -->
+        <div class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl p-6 mb-6">
+          <p class="text-sm font-bold text-gray-700 text-center mb-2">Kies wat je kunt missen</p>
+          <p class="text-xs text-gray-400 text-center mb-6">Iedereen verdient toegang tot goede gezondheid</p>
+          
+          <div class="text-center mb-4">
+            <div class="flex items-baseline justify-center gap-1">
+              <span class="text-sm text-gray-500">€</span>
+              <span id="slider-amount" class="text-5xl font-black text-gray-800">14</span>
+              <span id="slider-cents" class="text-2xl font-bold text-gray-800">,95</span>
+            </div>
+          </div>
+
+          <div class="relative px-2">
+            <input type="range" id="price-slider" min="495" max="2995" value="1495" step="100"
+              class="w-full h-3 bg-gray-200 rounded-full appearance-none cursor-pointer accent-emerald-600"
+              oninput="updateSlider(this.value)"
+              style="background: linear-gradient(to right, #10b981 0%, #10b981 50%, #e5e7eb 50%, #e5e7eb 100%);">
+          </div>
+
+          <div class="flex justify-between mt-2 text-xs">
+            <span class="text-gray-400 font-medium">€4,95</span>
+            <span class="text-emerald-600 font-semibold" id="slider-label">💚 Gemiddeld</span>
+            <span class="text-gray-400 font-medium">€29,95</span>
+          </div>
+
+          <div id="slider-message" class="mt-4 text-center text-sm text-gray-500">
+            <i class="fas fa-heart text-emerald-500 mr-1"></i>
+            Gemiddeld kiezen mensen €14,95
+          </div>
+        </div>
+
+        <button id="pay-btn" onclick="startProtocolPayment()" class="w-full bg-emerald-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-emerald-700 transition shadow-lg shadow-emerald-200">
+          <i class="fas fa-lock mr-2"></i>Afrekenen — <span id="btn-amount">€14,95</span>
+        </button>
+
+        <div class="flex items-center justify-center gap-6 mt-6 opacity-60">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e9/IDEAL_Logo.svg/64px-IDEAL_Logo.svg.png" alt="iDEAL" class="h-6">
+          <i class="fab fa-cc-visa text-2xl text-gray-400"></i>
+          <i class="fab fa-cc-mastercard text-2xl text-gray-400"></i>
+          <i class="fas fa-shield-alt text-xl text-gray-400"></i>
+        </div>
+
+        <p class="text-xs text-center text-gray-400 mt-4">
+          <i class="fas fa-lock mr-1"></i>Beveiligde betaling via Stripe. Je gegevens zijn veilig.
+        </p>
+      </div>
+    </div>
+
+    <div class="text-center mt-6">
+      <a href="/menu" class="text-sm text-gray-400 hover:text-gray-600"><i class="fas fa-arrow-left mr-1"></i>Terug naar menu</a>
+    </div>
+  </main>
+
+  <script>
+    const portalCode = sessionStorage.getItem('portal_code');
+    const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+    if (!portalCode) { window.location.href = '/inloggen'; }
+
+    function updateSlider(val) {
+      const euros = Math.floor(val / 100);
+      const cents = (val % 100).toString().padStart(2, '0');
+      document.getElementById('slider-amount').textContent = euros;
+      document.getElementById('slider-cents').textContent = ',' + cents;
+      document.getElementById('btn-amount').textContent = '€' + euros + ',' + cents;
+      
+      // Update slider achtergrondkleur
+      const pct = ((val - 495) / (2995 - 495)) * 100;
+      document.getElementById('price-slider').style.background = 
+        'linear-gradient(to right, #10b981 0%, #10b981 ' + pct + '%, #e5e7eb ' + pct + '%, #e5e7eb 100%)';
+      
+      // Update label
+      const label = document.getElementById('slider-label');
+      const msg = document.getElementById('slider-message');
+      if (val <= 795) {
+        label.textContent = '🤝 Krap budget';
+        msg.innerHTML = '<i class="fas fa-heart text-emerald-500 mr-1"></i>Geen probleem — je gezondheid is het belangrijkst';
+      } else if (val <= 1295) {
+        label.textContent = '👍 Bewuste keuze';
+        msg.innerHTML = '<i class="fas fa-heart text-emerald-500 mr-1"></i>Een mooie bijdrage, dankjewel!';
+      } else if (val <= 1995) {
+        label.textContent = '💚 Gemiddeld';
+        msg.innerHTML = '<i class="fas fa-heart text-emerald-500 mr-1"></i>Gemiddeld kiezen mensen €14,95';
+      } else {
+        label.textContent = '🙏 Royaal';
+        msg.innerHTML = '<i class="fas fa-heart text-emerald-500 mr-1"></i>Geweldig! Hiermee help je ook anderen met een krap budget';
+      }
+    }
+
+    async function startProtocolPayment() {
+      const btn = document.getElementById('pay-btn');
+      const amount = document.getElementById('price-slider').value;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Moment geduld...';
+
+      try {
+        const res = await fetch('/api/payments/create-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patient_id: patientInfo.id,
+            payment_type: 'protocol',
+            amount: amount,
+            portal_code: portalCode
+          })
+        });
+        const data = await res.json();
+        if (data.checkout_url) {
+          window.location.href = data.checkout_url;
+        } else {
+          alert(data.error || 'Er ging iets mis. Probeer opnieuw.');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-lock mr-2"></i>Afrekenen — <span id="btn-amount">' + document.getElementById('btn-amount').textContent + '</span>';
+        }
+      } catch(err) {
+        alert('Verbindingsfout. Probeer opnieuw.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-lock mr-2"></i>Afrekenen — ' + document.getElementById('btn-amount').textContent;
+      }
+    }
+  </script>
+</body></html>`)
+})
+
+// BETALING SUCCES PAGINA
+app.get('/betaling-succes', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-lg mx-auto px-4 py-12">
+    <div id="loading" class="text-center py-16">
+      <i class="fas fa-spinner fa-spin text-4xl text-portal-600 mb-4"></i>
+      <p class="text-gray-500">Betaling verifiëren...</p>
+    </div>
+    <div id="success" class="hidden fade-in">
+      <div class="bg-white rounded-2xl shadow-lg p-8 text-center">
+        <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <i class="fas fa-check-circle text-green-500 text-4xl"></i>
+        </div>
+        <h1 class="text-2xl font-black text-gray-800 mb-2">Betaling geslaagd!</h1>
+        <p id="success-message" class="text-gray-500 mb-6">Je betaling is succesvol verwerkt.</p>
+
+        <div id="analysis-next" class="hidden">
+          <div class="bg-blue-50 rounded-xl p-5 mb-6 text-left">
+            <p class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> Wat gebeurt er nu?</p>
+            <ul class="text-sm text-blue-700 space-y-2">
+              <li><i class="fas fa-check mr-2 text-blue-400"></i>Je analyse wordt beoordeeld door Marc</li>
+              <li><i class="fas fa-check mr-2 text-blue-400"></i>Je ontvangt inzicht in je stofwisselingstype</li>
+              <li><i class="fas fa-check mr-2 text-blue-400"></i>Je krijgt een gerichte lab-aanbeveling</li>
+              <li><i class="fas fa-clock mr-2 text-blue-400"></i>Verwachte doorlooptijd: 1-2 werkdagen</li>
+            </ul>
+          </div>
+        </div>
+
+        <div id="protocol-next" class="hidden">
+          <div class="bg-emerald-50 rounded-xl p-5 mb-6 text-left">
+            <p class="font-bold text-emerald-800 mb-2"><i class="fas fa-info-circle mr-1"></i> Wat gebeurt er nu?</p>
+            <ul class="text-sm text-emerald-700 space-y-2">
+              <li><i class="fas fa-check mr-2 text-emerald-400"></i>Je persoonlijke protocol wordt vrijgegeven</li>
+              <li><i class="fas fa-check mr-2 text-emerald-400"></i>Inclusief supplementschema en voedingsadvies</li>
+              <li><i class="fas fa-check mr-2 text-emerald-400"></i>Je kunt dit bekijken in je portaal</li>
+            </ul>
+          </div>
+        </div>
+
+        <a href="/menu" class="inline-block bg-portal-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-portal-700 transition">
+          <i class="fas fa-arrow-right mr-2"></i>Naar mijn portaal
+        </a>
+      </div>
+    </div>
+    <div id="failed" class="hidden fade-in">
+      <div class="bg-white rounded-2xl shadow-lg p-8 text-center">
+        <div class="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <i class="fas fa-times-circle text-red-500 text-4xl"></i>
+        </div>
+        <h1 class="text-2xl font-black text-gray-800 mb-2">Betaling niet gelukt</h1>
+        <p class="text-gray-500 mb-6">Er is iets misgegaan met je betaling. Probeer het opnieuw.</p>
+        <a href="/menu" class="inline-block bg-portal-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-portal-700 transition">
+          <i class="fas fa-arrow-left mr-2"></i>Terug naar menu
+        </a>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (async function() {
+      const params = new URLSearchParams(window.location.search);
+      const sessionId = params.get('session_id');
+      const type = params.get('type');
+
+      if (!sessionId) {
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('failed').classList.remove('hidden');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/payments/verify/' + sessionId);
+        const data = await res.json();
+
+        document.getElementById('loading').classList.add('hidden');
+
+        if (data.paid) {
+          document.getElementById('success').classList.remove('hidden');
+          if (type === 'analysis') {
+            document.getElementById('success-message').textContent = 'Je persoonlijke analyse is betaald. Marc gaat je resultaten beoordelen.';
+            document.getElementById('analysis-next').classList.remove('hidden');
+          } else if (type === 'protocol') {
+            document.getElementById('success-message').textContent = 'Je persoonlijke protocol is betaald. Bedankt voor je bijdrage!';
+            document.getElementById('protocol-next').classList.remove('hidden');
+          }
+          // Update sessionStorage
+          const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+          if (type === 'analysis') patientInfo.analysis_paid = true;
+          if (type === 'protocol') patientInfo.protocol_paid = true;
+          sessionStorage.setItem('portal_patient', JSON.stringify(patientInfo));
+        } else {
+          document.getElementById('failed').classList.remove('hidden');
+        }
+      } catch(err) {
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('failed').classList.remove('hidden');
+      }
+    })();
+  </script>
+</body></html>`)
+})
+
 // PORTAL MENU (na inloggen)
 app.get('/menu', (c) => {
   return c.html(`${portalHead}
@@ -4203,29 +4853,61 @@ app.get('/menu', (c) => {
           <i class="fas fa-user-circle text-portal-600 text-3xl"></i>
         </div>
         <h2 class="text-2xl font-black text-gray-800">Welkom, <span id="patient-name">...</span></h2>
-        <p class="text-gray-500 mt-2">Kies wat u wilt doen:</p>
+        <p class="text-gray-500 mt-2" id="menu-subtitle">Kies wat u wilt doen:</p>
       </div>
+
+      <!-- Status banner (dynamisch) -->
+      <div id="status-banner" class="hidden mb-6 fade-in"></div>
       
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 fade-in">
-        <!-- Vragenlijst -->
-        <a href="/vragenlijst" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
-          <div class="w-16 h-16 bg-blue-100 group-hover:bg-blue-200 rounded-2xl flex items-center justify-center mb-4 transition">
-            <i class="fas fa-clipboard-check text-blue-600 text-2xl"></i>
+        <!-- Stap 1: Vragenlijst (altijd zichtbaar) -->
+        <a href="/vragenlijst" id="card-questionnaire" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+          <div class="flex items-center justify-between mb-4">
+            <div class="w-16 h-16 bg-blue-100 group-hover:bg-blue-200 rounded-2xl flex items-center justify-center transition">
+              <i class="fas fa-clipboard-check text-blue-600 text-2xl"></i>
+            </div>
+            <span id="badge-questionnaire" class="hidden text-xs font-bold px-3 py-1 rounded-full"></span>
           </div>
           <h3 class="text-xl font-bold text-gray-800 mb-2">Vragenlijst Invullen</h3>
-          <p class="text-gray-500 text-sm mb-4">Beantwoord 15 vragen over uw gezondheid, leefstijl en klachten. Uw therapeut beoordeelt uw antwoorden persoonlijk.</p>
-          <span class="text-blue-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Start de vragenlijst</span>
+          <p class="text-gray-500 text-sm mb-4">Beantwoord 15 vragen over uw gezondheid. Gratis en vrijblijvend.</p>
+          <span class="text-blue-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> <span id="cta-questionnaire">Start de vragenlijst</span></span>
         </a>
         
-        <!-- Lab Upload -->
-        <a href="/lab-upload" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+        <!-- Stap 2: Analyse betalen (na vragenlijst) -->
+        <div id="card-analysis" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block cursor-pointer hidden" onclick="goToAnalysis()">
+          <div class="flex items-center justify-between mb-4">
+            <div class="w-16 h-16 bg-portal-100 group-hover:bg-portal-200 rounded-2xl flex items-center justify-center transition">
+              <i class="fas fa-microscope text-portal-600 text-2xl"></i>
+            </div>
+            <span id="badge-analysis" class="text-xs font-bold px-3 py-1 rounded-full bg-portal-100 text-portal-700">€9,95</span>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Persoonlijke Analyse</h3>
+          <p class="text-gray-500 text-sm mb-4" id="desc-analysis">Ontvang je volledige analyse, beoordeling door Marc en lab-aanbeveling.</p>
+          <span class="text-portal-600 font-semibold text-sm" id="cta-analysis"><i class="fas fa-lock mr-1"></i> Ontgrendel voor €9,95</span>
+        </div>
+
+        <!-- Stap 3: Lab Upload (na betaling analyse) -->
+        <a href="/lab-upload" id="card-lab" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block hidden">
           <div class="w-16 h-16 bg-amber-100 group-hover:bg-amber-200 rounded-2xl flex items-center justify-center mb-4 transition">
             <i class="fas fa-file-upload text-amber-600 text-2xl"></i>
           </div>
           <h3 class="text-xl font-bold text-gray-800 mb-2">Lab-formulier Uploaden</h3>
-          <p class="text-gray-500 text-sm mb-4">Upload een foto of scan van uw labresultaten. Uw therapeut verwerkt deze in uw dossier.</p>
+          <p class="text-gray-500 text-sm mb-4">Upload je labresultaten zodat Marc je persoonlijke protocol kan maken.</p>
           <span class="text-amber-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Upload document</span>
         </a>
+
+        <!-- Stap 4: Protocol betalen (nadat lab is verwerkt) -->
+        <div id="card-protocol" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block cursor-pointer hidden" onclick="goToProtocol()">
+          <div class="flex items-center justify-between mb-4">
+            <div class="w-16 h-16 bg-emerald-100 group-hover:bg-emerald-200 rounded-2xl flex items-center justify-center transition">
+              <i class="fas fa-clipboard-list text-emerald-600 text-2xl"></i>
+            </div>
+            <span class="text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-700">vanaf €4,95</span>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Persoonlijk Protocol</h3>
+          <p class="text-gray-500 text-sm mb-4">Je supplement- en voedingsschema op maat. Betaal wat je kunt missen.</p>
+          <span class="text-emerald-600 font-semibold text-sm"><i class="fas fa-heart mr-1"></i> Kies je bijdrage</span>
+        </div>
         
         <!-- Disclaimer -->
         <a href="/#disclaimer" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
@@ -4233,7 +4915,7 @@ app.get('/menu', (c) => {
             <i class="fas fa-exclamation-triangle text-yellow-600 text-2xl"></i>
           </div>
           <h3 class="text-xl font-bold text-gray-800 mb-2">Disclaimer & Informatie</h3>
-          <p class="text-gray-500 text-sm mb-4">Lees de belangrijke informatie over het gebruik van dit portaal en de medische disclaimer.</p>
+          <p class="text-gray-500 text-sm mb-4">Lees de belangrijke informatie over het gebruik van dit portaal.</p>
           <span class="text-yellow-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Lees meer</span>
         </a>
         
@@ -4243,28 +4925,102 @@ app.get('/menu', (c) => {
             <i class="fas fa-sign-out-alt text-gray-500 text-2xl"></i>
           </div>
           <h3 class="text-xl font-bold text-gray-800 mb-2">Uitloggen</h3>
-          <p class="text-gray-500 text-sm mb-4">Sluit uw sessie af. U kunt later opnieuw inloggen met uw toegangscode.</p>
+          <p class="text-gray-500 text-sm mb-4">Sluit uw sessie af.</p>
           <span class="text-gray-500 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Uitloggen</span>
         </button>
       </div>
     </div>
   </main>
   <script>
-    // Check login
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = sessionStorage.getItem('portal_patient');
     if (!portalCode || !patientInfo) {
       window.location.href = '/inloggen';
-    } else {
-      const p = JSON.parse(patientInfo);
-      document.getElementById('patient-name').textContent = p.first_name + ' ' + p.last_name;
     }
-    
+    const p = JSON.parse(patientInfo);
+    document.getElementById('patient-name').textContent = p.first_name + ' ' + p.last_name;
+
+    function goToAnalysis() { window.location.href = '/betalen/analyse'; }
+    function goToProtocol() { window.location.href = '/betalen/protocol'; }
     function logout() {
       sessionStorage.removeItem('portal_code');
       sessionStorage.removeItem('portal_patient');
+      sessionStorage.removeItem('questionnaire_consent');
       window.location.href = '/';
     }
+
+    // Laad betaalstatus en pas menu aan
+    (async function loadMenuState() {
+      try {
+        const res = await fetch('/api/payments/status/' + p.id);
+        const payments = await res.json();
+        const analysisPaid = payments.analysis_paid;
+        const protocolPaid = payments.protocol_paid;
+
+        // Check of er een assessment is
+        const assessRes = await fetch('/api/portal/check-status?code=' + portalCode);
+        const assessData = await assessRes.json();
+        const hasAssessment = assessData.has_assessment;
+        const reviewStatus = assessData.review_status;
+        const hasProtocol = assessData.has_protocol;
+
+        const banner = document.getElementById('status-banner');
+        const badgeQ = document.getElementById('badge-questionnaire');
+
+        // Vragenlijst badge
+        if (hasAssessment) {
+          badgeQ.classList.remove('hidden');
+          badgeQ.textContent = '✓ Ingevuld';
+          badgeQ.className = 'text-xs font-bold px-3 py-1 rounded-full bg-green-100 text-green-700';
+          document.getElementById('cta-questionnaire').textContent = 'Bekijk antwoorden';
+        }
+
+        // Toon analyse-kaart als vragenlijst is ingevuld
+        if (hasAssessment) {
+          document.getElementById('card-analysis').classList.remove('hidden');
+          if (analysisPaid) {
+            document.getElementById('badge-analysis').textContent = '✓ Betaald';
+            document.getElementById('badge-analysis').className = 'text-xs font-bold px-3 py-1 rounded-full bg-green-100 text-green-700';
+            document.getElementById('cta-analysis').innerHTML = '<i class="fas fa-check mr-1"></i> Betaald';
+            document.getElementById('desc-analysis').textContent = reviewStatus === 'reviewed' 
+              ? 'Je analyse is beoordeeld! Bekijk je resultaten.'
+              : 'Je analyse wordt beoordeeld door Marc. Verwachte doorlooptijd: 1-2 werkdagen.';
+          }
+        }
+
+        // Toon lab-upload als analyse betaald is
+        if (analysisPaid) {
+          document.getElementById('card-lab').classList.remove('hidden');
+        }
+
+        // Toon protocol-kaart als er een protocol beschikbaar is
+        if (hasProtocol && !protocolPaid) {
+          document.getElementById('card-protocol').classList.remove('hidden');
+        }
+        if (protocolPaid) {
+          document.getElementById('card-protocol').classList.remove('hidden');
+          document.getElementById('card-protocol').innerHTML = '<div class="flex items-center justify-between mb-4"><div class="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center"><i class="fas fa-clipboard-list text-emerald-600 text-2xl"></i></div><span class="text-xs font-bold px-3 py-1 rounded-full bg-green-100 text-green-700">✓ Betaald</span></div><h3 class="text-xl font-bold text-gray-800 mb-2">Persoonlijk Protocol</h3><p class="text-gray-500 text-sm mb-4">Je protocol is beschikbaar.</p><span class="text-emerald-600 font-semibold text-sm"><i class="fas fa-eye mr-1"></i> Bekijk protocol</span>';
+        }
+
+        // Status banner
+        if (!hasAssessment) {
+          banner.innerHTML = '<div class="bg-blue-50 border border-blue-200 rounded-xl p-4"><p class="text-sm text-blue-800"><i class="fas fa-info-circle mr-2"></i><strong>Stap 1:</strong> Vul de gratis vragenlijst in om te beginnen met je persoonlijke analyse.</p></div>';
+          banner.classList.remove('hidden');
+        } else if (!analysisPaid) {
+          banner.innerHTML = '<div class="bg-portal-50 border border-portal-200 rounded-xl p-4"><p class="text-sm text-portal-800"><i class="fas fa-star mr-2"></i><strong>Goed bezig!</strong> Je vragenlijst is ingevuld. Ontgrendel nu je persoonlijke analyse voor €9,95.</p></div>';
+          banner.classList.remove('hidden');
+        } else if (reviewStatus === 'pending_review') {
+          banner.innerHTML = '<div class="bg-amber-50 border border-amber-200 rounded-xl p-4"><p class="text-sm text-amber-800"><i class="fas fa-clock mr-2"></i><strong>In beoordeling:</strong> Marc beoordeelt je analyse. Je ontvangt bericht zodra de resultaten klaar zijn.</p></div>';
+          banner.classList.remove('hidden');
+        } else if (reviewStatus === 'reviewed' && !protocolPaid && hasProtocol) {
+          banner.innerHTML = '<div class="bg-emerald-50 border border-emerald-200 rounded-xl p-4"><p class="text-sm text-emerald-800"><i class="fas fa-gift mr-2"></i><strong>Je protocol is klaar!</strong> Kies je bijdrage en ontvang je persoonlijke supplement- en voedingsschema.</p></div>';
+          banner.classList.remove('hidden');
+        }
+
+      } catch(err) {
+        console.log('Status laden mislukt:', err);
+      }
+    })();
   </script>
 </body></html>`)
 })
