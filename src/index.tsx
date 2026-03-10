@@ -3121,11 +3121,14 @@ const portalNav = `
 app.post('/api/portal/register', async (c) => {
   const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
-  const { first_name, last_name, email, gender, date_of_birth } = body
+  const { first_name, last_name, email, gender, date_of_birth, consent_given, consent_timestamp } = body
 
   // Validatie
   if (!first_name?.trim() || !last_name?.trim() || !email?.trim()) {
     return c.json({ error: 'Voornaam, achternaam en email zijn verplicht.' }, 400)
+  }
+  if (!consent_given) {
+    return c.json({ error: 'Je moet akkoord gaan met alle voorwaarden om door te gaan.' }, 400)
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return c.json({ error: 'Voer een geldig emailadres in.' }, 400)
@@ -3185,7 +3188,10 @@ app.post('/api/portal/register', async (c) => {
       date_of_birth: date_of_birth || null,
       status: 'active',
       portal_code: code,
-      portal_code_created_at: new Date().toISOString()
+      portal_code_created_at: new Date().toISOString(),
+      consent_given: true,
+      consent_timestamp: consent_timestamp || new Date().toISOString(),
+      consent_ip: c.req.header('x-forwarded-for') || c.req.header('cf-connecting-ip') || 'unknown'
     }])
     .select()
     .single()
@@ -3725,11 +3731,25 @@ app.get('/aanmelden', (c) => {
           </div>
         </div>
 
-        <div class="bg-gray-50 rounded-xl p-4 border">
+        <div class="bg-gray-50 rounded-xl p-5 border space-y-4">
+          <p class="text-sm font-bold text-gray-700"><i class="fas fa-file-contract mr-1"></i> Toestemming & voorwaarden</p>
+          
           <label class="flex items-start gap-3 cursor-pointer">
-            <input type="checkbox" id="reg-consent" required class="mt-1 w-4 h-4 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
-            <span class="text-sm text-gray-600">Ik ga akkoord met de verwerking van mijn gegevens ten behoeve van de gezondheidsanalyse. Mijn data wordt veilig opgeslagen en niet gedeeld met derden. <a href="#" class="text-portal-600 underline">Privacybeleid</a></span>
+            <input type="checkbox" id="reg-consent-data" required class="mt-1 w-4 h-4 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
+            <span class="text-sm text-gray-600"><strong>Gegevensverwerking (AVG):</strong> Ik geef toestemming voor het verwerken van mijn persoonsgegevens en gezondheidsgegevens ten behoeve van de gezondheidsanalyse. Ik begrijp dat mijn gegevens veilig worden opgeslagen, uitsluitend worden gebruikt voor mijn persoonlijke analyse en niet worden gedeeld met derden. Ik kan mijn gegevens op elk moment laten verwijderen.</span>
           </label>
+
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" id="reg-consent-medical" required class="mt-1 w-4 h-4 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
+            <span class="text-sm text-gray-600"><strong>Medische disclaimer:</strong> Ik begrijp dat deze analyse <em>geen medisch advies, diagnose of behandeling</em> is en niet het oordeel van een arts vervangt. De resultaten zijn bedoeld als aanvullende informatie op basis van orthomoleculaire en functionele geneeskunde principes. Bij acute klachten neem ik contact op met mijn huisarts of bel 112.</span>
+          </label>
+
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" id="reg-consent-liability" required class="mt-1 w-4 h-4 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
+            <span class="text-sm text-gray-600"><strong>Aansprakelijkheid:</strong> Ik begrijp en accepteer dat Fysiopraktijk Zeist en de betrokken therapeuten niet aansprakelijk zijn voor enige directe of indirecte schade die voortvloeit uit het gebruik van deze analyse, de gegeven adviezen of aanbevolen supplementen. Ik ben zelf verantwoordelijk voor het raadplegen van mijn arts bij wijzigingen in medicatie of leefstijl.</span>
+          </label>
+
+          <p class="text-xs text-gray-400 mt-2">Door aan te melden ga je akkoord met ons <a href="/privacybeleid" target="_blank" class="text-portal-600 underline">privacybeleid</a> en onze <a href="/voorwaarden" target="_blank" class="text-portal-600 underline">algemene voorwaarden</a>.</p>
         </div>
 
         <button type="submit" id="reg-btn" class="w-full bg-portal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition shadow-lg shadow-portal-200">
@@ -3790,9 +3810,11 @@ app.get('/aanmelden', (c) => {
       errDiv.classList.add('hidden');
 
       // Validatie
-      const consent = document.getElementById('reg-consent').checked;
-      if (!consent) {
-        errDiv.textContent = 'Je moet akkoord gaan met de gegevensverwerking om door te gaan.';
+      const consentData = document.getElementById('reg-consent-data').checked;
+      const consentMedical = document.getElementById('reg-consent-medical').checked;
+      const consentLiability = document.getElementById('reg-consent-liability').checked;
+      if (!consentData || !consentMedical || !consentLiability) {
+        errDiv.textContent = 'Je moet alle drie de voorwaarden accepteren om door te gaan.';
         errDiv.classList.remove('hidden');
         return;
       }
@@ -3809,7 +3831,14 @@ app.get('/aanmelden', (c) => {
             last_name: document.getElementById('reg-last-name').value,
             email: document.getElementById('reg-email').value,
             gender: document.getElementById('reg-gender').value || null,
-            date_of_birth: document.getElementById('reg-dob').value || null
+            date_of_birth: document.getElementById('reg-dob').value || null,
+            consent_given: true,
+            consent_timestamp: new Date().toISOString(),
+            consent_details: {
+              data_processing: consentData,
+              medical_disclaimer: consentMedical,
+              liability_waiver: consentLiability
+            }
           })
         });
         const data = await res.json();
@@ -3836,6 +3865,240 @@ app.get('/aanmelden', (c) => {
       }
     });
   </script>
+</body></html>`)
+})
+
+// PRIVACYBELEID PAGINA
+app.get('/privacybeleid', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-3xl mx-auto px-4 py-12">
+    <div class="bg-white rounded-2xl shadow-lg p-8 md:p-12">
+      <div class="mb-8">
+        <a href="/" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar home</a>
+      </div>
+      
+      <h1 class="text-3xl font-black text-gray-800 mb-2"><i class="fas fa-shield-alt text-portal-600 mr-2"></i>Privacybeleid</h1>
+      <p class="text-sm text-gray-400 mb-8">Laatst bijgewerkt: 10 maart 2026</p>
+
+      <div class="prose max-w-none space-y-6 text-gray-700 leading-relaxed">
+        
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-building mr-2 text-portal-500"></i>1. Verantwoordelijke</h2>
+          <p>Fysiopraktijk Zeist, gevestigd te Zeist, is verantwoordelijk voor de verwerking van persoonsgegevens zoals beschreven in dit privacybeleid. De praktijk wordt geleid door Marc, fysiotherapeut en orthomoleculair therapeut.</p>
+          <div class="bg-gray-50 rounded-lg p-4 mt-3">
+            <p class="text-sm"><strong>Contactgegevens:</strong><br>
+            Fysiopraktijk Zeist<br>
+            E-mail: info@fysiopraktijkzeist.nl<br>
+            Website: fysiopraktijkzeist.nl</p>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-database mr-2 text-portal-500"></i>2. Welke gegevens verwerken wij</h2>
+          <p>Wij verwerken de volgende persoonsgegevens:</p>
+          <ul class="list-disc pl-6 space-y-1 mt-2">
+            <li><strong>Identificatiegegevens:</strong> Voornaam, achternaam, e-mailadres, geslacht, geboortedatum</li>
+            <li><strong>Gezondheidsgegevens:</strong> Antwoorden op de gezondheidsvragenlijst, laboratoriumuitslagen (indien geüpload), supplementprotocollen</li>
+            <li><strong>Technische gegevens:</strong> IP-adres (voor beveiligingsdoeleinden), tijdstip van registratie en toestemming</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-bullseye mr-2 text-portal-500"></i>3. Doel van de verwerking</h2>
+          <p>Wij verwerken uw gegevens voor de volgende doelen:</p>
+          <ul class="list-disc pl-6 space-y-1 mt-2">
+            <li>Het uitvoeren van een persoonlijke gezondheidsanalyse op basis van orthomoleculaire en functionele geneeskunde principes</li>
+            <li>Het genereren van gerichte aanbevelingen voor laboratoriumonderzoek</li>
+            <li>Het opstellen van persoonlijke supplementprotocollen (na beoordeling door de therapeut)</li>
+            <li>Het bijhouden van uw voortgang en gezondheidshistorie</li>
+            <li>Communicatie over uw analyse en resultaten</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-balance-scale mr-2 text-portal-500"></i>4. Rechtsgrondslag</h2>
+          <p>De verwerking van uw persoonsgegevens is gebaseerd op:</p>
+          <ul class="list-disc pl-6 space-y-1 mt-2">
+            <li><strong>Uitdrukkelijke toestemming (Art. 6 lid 1a en Art. 9 lid 2a AVG):</strong> U geeft actief toestemming bij registratie door het aanvinken van de toestemmingsverklaringen</li>
+            <li><strong>Gerechtvaardigd belang (Art. 6 lid 1f AVG):</strong> Voor beveiligingsmaatregelen zoals rate-limiting en sessiemanagement</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-clock mr-2 text-portal-500"></i>5. Bewaartermijn</h2>
+          <p>Wij bewaren uw gegevens zolang als nodig is voor de doeleinden waarvoor zij zijn verzameld. Specifiek:</p>
+          <ul class="list-disc pl-6 space-y-1 mt-2">
+            <li>Accountgegevens: zolang uw account actief is</li>
+            <li>Gezondheidsgegevens: maximaal 20 jaar na laatste contact (conform WGBO)</li>
+            <li>Toestemmingsregistratie: 5 jaar na intrekking van toestemming</li>
+          </ul>
+          <p class="mt-2">U kunt op elk moment verzoeken uw gegevens te laten verwijderen (zie sectie 7).</p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-lock mr-2 text-portal-500"></i>6. Beveiliging</h2>
+          <p>Wij nemen de bescherming van uw gegevens serieus en nemen passende maatregelen:</p>
+          <ul class="list-disc pl-6 space-y-1 mt-2">
+            <li>Versleutelde verbinding (HTTPS/TLS) voor alle datatransmissie</li>
+            <li>Gegevens worden opgeslagen bij Supabase (EU-regio) met versleuteling in rust</li>
+            <li>Toegang tot het admin-panel is beveiligd met wachtwoord, tweefactorauthenticatie (2FA) en rate-limiting</li>
+            <li>Patiëntgegevens zijn alleen toegankelijk voor de behandelend therapeut</li>
+            <li>Sessies verlopen automatisch na 24 uur</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-user-shield mr-2 text-portal-500"></i>7. Uw rechten</h2>
+          <p>Op grond van de AVG heeft u de volgende rechten:</p>
+          <ul class="list-disc pl-6 space-y-1 mt-2">
+            <li><strong>Recht op inzage:</strong> U kunt opvragen welke gegevens wij van u verwerken</li>
+            <li><strong>Recht op rectificatie:</strong> U kunt onjuiste gegevens laten corrigeren</li>
+            <li><strong>Recht op vergetelheid:</strong> U kunt verzoeken uw gegevens te laten verwijderen</li>
+            <li><strong>Recht op beperking:</strong> U kunt de verwerking van uw gegevens laten beperken</li>
+            <li><strong>Recht op dataportabiliteit:</strong> U kunt uw gegevens in een gestructureerd formaat opvragen</li>
+            <li><strong>Recht om toestemming in te trekken:</strong> U kunt uw toestemming op elk moment intrekken</li>
+          </ul>
+          <p class="mt-2">Om uw rechten uit te oefenen kunt u contact opnemen via info@fysiopraktijkzeist.nl. Wij reageren binnen 30 dagen op uw verzoek.</p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-share-alt mr-2 text-portal-500"></i>8. Delen met derden</h2>
+          <p>Wij delen uw gegevens <strong>niet</strong> met derden, behalve:</p>
+          <ul class="list-disc pl-6 space-y-1 mt-2">
+            <li><strong>Supabase (verwerker):</strong> voor veilige opslag van gegevens (EU-regio, verwerkersovereenkomst aanwezig)</li>
+            <li><strong>Netlify (hosting):</strong> voor het hosten van de applicatie (geen toegang tot patiëntgegevens)</li>
+          </ul>
+          <p class="mt-2">Wij verkopen uw gegevens nooit aan derden en gebruiken ze niet voor commerciële doeleinden buiten de beschreven doelen.</p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3"><i class="fas fa-gavel mr-2 text-portal-500"></i>9. Klachten</h2>
+          <p>Heeft u een klacht over de verwerking van uw persoonsgegevens? Neem dan contact met ons op. U heeft daarnaast het recht om een klacht in te dienen bij de Autoriteit Persoonsgegevens (AP): <a href="https://autoriteitpersoonsgegevens.nl" target="_blank" class="text-portal-600 underline">autoriteitpersoonsgegevens.nl</a>.</p>
+        </section>
+
+      </div>
+    </div>
+  </main>
+</body></html>`)
+})
+
+// ALGEMENE VOORWAARDEN PAGINA
+app.get('/voorwaarden', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-3xl mx-auto px-4 py-12">
+    <div class="bg-white rounded-2xl shadow-lg p-8 md:p-12">
+      <div class="mb-8">
+        <a href="/" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar home</a>
+      </div>
+      
+      <h1 class="text-3xl font-black text-gray-800 mb-2"><i class="fas fa-file-contract text-portal-600 mr-2"></i>Algemene Voorwaarden</h1>
+      <p class="text-sm text-gray-400 mb-8">Laatst bijgewerkt: 10 maart 2026</p>
+
+      <div class="prose max-w-none space-y-6 text-gray-700 leading-relaxed">
+        
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">1. Definities</h2>
+          <ul class="list-disc pl-6 space-y-1">
+            <li><strong>Platform:</strong> De gezondheidsanalyse-applicatie van Fysiopraktijk Zeist, bereikbaar via afvallen.netlify.app</li>
+            <li><strong>Gebruiker:</strong> Iedere persoon die zich registreert op en gebruik maakt van het Platform</li>
+            <li><strong>Therapeut:</strong> De behandelend therapeut van Fysiopraktijk Zeist</li>
+            <li><strong>Analyse:</strong> De op basis van de vragenlijst gegenereerde gezondheidsanalyse</li>
+            <li><strong>Dienst:</strong> Het geheel aan diensten aangeboden via het Platform</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">2. Aard van de Dienst</h2>
+          <div class="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-lg">
+            <p class="font-semibold text-amber-800"><i class="fas fa-exclamation-triangle mr-1"></i> Belangrijk</p>
+            <p class="text-sm text-amber-700 mt-1">Het Platform biedt een <em>informatieve gezondheidsanalyse</em> op basis van orthomoleculaire en functionele geneeskunde principes. Dit is uitdrukkelijk <strong>geen medisch advies, diagnose of behandeling</strong> en vervangt niet het oordeel van een arts of medisch specialist.</p>
+          </div>
+          <p class="mt-3">De analyse is bedoeld als aanvullende informatie om inzicht te geven in mogelijke gezondheidspatronen. De resultaten worden beoordeeld door een gekwalificeerd therapeut voordat deze aan de gebruiker worden vrijgegeven.</p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">3. Registratie en Toegang</h2>
+          <ul class="list-disc pl-6 space-y-1">
+            <li>Registratie is gratis en open voor iedereen</li>
+            <li>De gebruiker ontvangt een persoonlijke toegangscode</li>
+            <li>De gebruiker is verantwoordelijk voor het geheimhouden van deze code</li>
+            <li>De gebruiker garandeert dat de opgegeven gegevens juist en volledig zijn</li>
+            <li>De minimale leeftijd voor gebruik is 18 jaar</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">4. Aansprakelijkheid</h2>
+          <div class="bg-red-50 border-l-4 border-red-400 p-4 rounded-r-lg">
+            <p class="font-semibold text-red-800"><i class="fas fa-exclamation-circle mr-1"></i> Uitsluiting aansprakelijkheid</p>
+            <ul class="text-sm text-red-700 mt-2 space-y-1 list-disc pl-4">
+              <li>Fysiopraktijk Zeist en de betrokken therapeuten zijn <strong>niet aansprakelijk</strong> voor enige directe of indirecte schade die voortvloeit uit het gebruik van het Platform, de gegeven analyses, adviezen of aanbevolen supplementen</li>
+              <li>De gebruiker is <strong>zelf verantwoordelijk</strong> voor het raadplegen van een arts voordat wijzigingen worden aangebracht in medicatie, voeding of leefstijl</li>
+              <li>Bij acute gezondheidsklachten dient de gebruiker <strong>altijd</strong> contact op te nemen met de huisarts of 112 te bellen</li>
+            </ul>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">5. Supplementen en aanbevelingen</h2>
+          <ul class="list-disc pl-6 space-y-1">
+            <li>Supplementadviezen zijn <strong>geen medicatie</strong> en vervangen geen medische behandeling</li>
+            <li>Bij zwangerschap, borstvoeding of medicijngebruik dient <strong>altijd</strong> eerst een arts te worden geraadpleegd</li>
+            <li>De gebruiker neemt supplementen geheel op eigen risico en verantwoordelijkheid</li>
+            <li>Fysiopraktijk Zeist is niet aansprakelijk voor bijwerkingen of interacties met medicatie</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">6. Laboratoriumonderzoek</h2>
+          <ul class="list-disc pl-6 space-y-1">
+            <li>Het Platform kan aanbevelingen doen voor laboratoriumonderzoek</li>
+            <li>De gebruiker is zelf verantwoordelijk voor het laten uitvoeren van eventueel onderzoek</li>
+            <li>Laboratoriumuitslagen worden geïnterpreteerd vanuit orthomoleculaire referentiewaarden, die <strong>kunnen afwijken</strong> van conventionele medische referentiewaarden</li>
+            <li>De interpretatie vervangt niet het oordeel van de aanvragend arts</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">7. Intellectueel eigendom</h2>
+          <p>Alle inhoud van het Platform, waaronder teksten, vragenlijsten, algoritmen, analyses en vormgeving, zijn eigendom van Fysiopraktijk Zeist en worden beschermd door intellectuele eigendomsrechten. Gebruik buiten het Platform is niet toegestaan zonder schriftelijke toestemming.</p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">8. Beëindiging</h2>
+          <ul class="list-disc pl-6 space-y-1">
+            <li>De gebruiker kan op elk moment zijn/haar account laten verwijderen door contact op te nemen via info@fysiopraktijkzeist.nl</li>
+            <li>Fysiopraktijk Zeist behoudt zich het recht voor om accounts te blokkeren bij misbruik</li>
+            <li>Bij beëindiging worden gegevens verwijderd conform het privacybeleid</li>
+          </ul>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">9. Wijzigingen</h2>
+          <p>Fysiopraktijk Zeist behoudt zich het recht voor deze voorwaarden te wijzigen. Wijzigingen worden op het Platform gepubliceerd. Door het Platform te blijven gebruiken na een wijziging, accepteert de gebruiker de gewijzigde voorwaarden.</p>
+        </section>
+
+        <section>
+          <h2 class="text-xl font-bold text-gray-800 mb-3">10. Toepasselijk recht</h2>
+          <p>Op deze voorwaarden is Nederlands recht van toepassing. Geschillen worden voorgelegd aan de bevoegde rechter in het arrondissement Midden-Nederland.</p>
+        </section>
+
+        <section class="border-t pt-6">
+          <h2 class="text-xl font-bold text-gray-800 mb-3">Contact</h2>
+          <p>Voor vragen over deze voorwaarden kunt u contact opnemen met:</p>
+          <div class="bg-gray-50 rounded-lg p-4 mt-3">
+            <p class="text-sm"><strong>Fysiopraktijk Zeist</strong><br>
+            E-mail: info@fysiopraktijkzeist.nl<br>
+            Website: fysiopraktijkzeist.nl</p>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
 </body></html>`)
 })
 
@@ -4014,7 +4277,45 @@ app.get('/vragenlijst', (c) => {
   <main class="max-w-3xl mx-auto px-4 py-8">
     <div class="mb-6"><a href="/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
     
-    <div id="questionnaire-container" class="bg-white rounded-2xl shadow-lg">
+    <!-- CONSENT SCHERM (vóór de vragenlijst) -->
+    <div id="consent-screen" class="bg-white rounded-2xl shadow-lg fade-in">
+      <div class="bg-gradient-to-r from-amber-500 to-orange-500 text-white p-6 rounded-t-2xl">
+        <h2 class="text-2xl font-bold"><i class="fas fa-file-contract mr-2"></i>Voordat je begint</h2>
+        <p class="opacity-90 mt-1">Lees en accepteer onderstaande voorwaarden</p>
+      </div>
+      <div class="p-6 space-y-5">
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+          <p class="text-sm text-blue-800"><i class="fas fa-info-circle mr-2"></i><strong>Over deze vragenlijst:</strong> Je gaat 15 vragen beantwoorden over je gezondheid. Op basis van je antwoorden wordt een analyse gemaakt die door een therapeut wordt beoordeeld. Je resultaten worden pas vrijgegeven na beoordeling.</p>
+        </div>
+
+        <div class="space-y-4">
+          <label class="flex items-start gap-3 cursor-pointer group">
+            <input type="checkbox" id="q-consent-medical" class="mt-1 w-5 h-5 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
+            <span class="text-sm text-gray-600 group-hover:text-gray-800 transition"><strong>Medische disclaimer:</strong> Ik begrijp dat deze analyse <em>geen medisch advies, diagnose of behandeling</em> is. De resultaten zijn bedoeld als aanvullende informatie op basis van orthomoleculaire en functionele geneeskunde. Bij acute klachten neem ik contact op met mijn huisarts of bel 112.</span>
+          </label>
+
+          <label class="flex items-start gap-3 cursor-pointer group">
+            <input type="checkbox" id="q-consent-data" class="mt-1 w-5 h-5 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
+            <span class="text-sm text-gray-600 group-hover:text-gray-800 transition"><strong>Gegevensverwerking:</strong> Ik geef toestemming voor het verwerken van mijn gezondheidsantwoorden ten behoeve van de analyse. Mijn gegevens worden veilig opgeslagen conform de <a href="/privacybeleid" target="_blank" class="text-portal-600 underline">AVG/privacybeleid</a>.</span>
+          </label>
+
+          <label class="flex items-start gap-3 cursor-pointer group">
+            <input type="checkbox" id="q-consent-liability" class="mt-1 w-5 h-5 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
+            <span class="text-sm text-gray-600 group-hover:text-gray-800 transition"><strong>Aansprakelijkheid:</strong> Ik begrijp dat Fysiopraktijk Zeist en de betrokken therapeuten niet aansprakelijk zijn voor schade die voortvloeit uit het gebruik van deze analyse of adviezen. Ik ben zelf verantwoordelijk voor mijn gezondheid. Lees onze <a href="/voorwaarden" target="_blank" class="text-portal-600 underline">algemene voorwaarden</a>.</span>
+          </label>
+        </div>
+
+        <div id="consent-error" class="hidden bg-red-50 border border-red-200 text-red-700 rounded-xl p-3 text-sm">
+          <i class="fas fa-exclamation-circle mr-1"></i> Je moet alle drie de voorwaarden accepteren om door te gaan.
+        </div>
+
+        <button onclick="acceptConsent()" class="w-full bg-portal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition shadow-lg shadow-portal-200">
+          <i class="fas fa-check-circle mr-2"></i>Ik ga akkoord — start de vragenlijst
+        </button>
+      </div>
+    </div>
+
+    <div id="questionnaire-container" class="bg-white rounded-2xl shadow-lg hidden">
       <div class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-6 rounded-t-2xl">
         <h2 class="text-2xl font-bold"><i class="fas fa-clipboard-check mr-2"></i>Gezondheids­vragenlijst</h2>
         <p class="opacity-90 mt-1" id="patient-greeting">Laden...</p>
@@ -4045,6 +4346,37 @@ app.get('/vragenlijst', (c) => {
   </main>
   
   <script>
+    // Consent acceptatie functie
+    function acceptConsent() {
+      const c1 = document.getElementById('q-consent-medical').checked;
+      const c2 = document.getElementById('q-consent-data').checked;
+      const c3 = document.getElementById('q-consent-liability').checked;
+      const errDiv = document.getElementById('consent-error');
+      
+      if (!c1 || !c2 || !c3) {
+        errDiv.classList.remove('hidden');
+        return;
+      }
+      errDiv.classList.add('hidden');
+      
+      // Sla consent op in sessionStorage
+      sessionStorage.setItem('questionnaire_consent', JSON.stringify({
+        medical: true, data_processing: true, liability: true,
+        timestamp: new Date().toISOString()
+      }));
+      
+      // Verberg consent, toon vragenlijst
+      document.getElementById('consent-screen').classList.add('hidden');
+      document.getElementById('questionnaire-container').classList.remove('hidden');
+    }
+
+    // Check of consent al gegeven is (bij terugkeer)
+    const existingConsent = sessionStorage.getItem('questionnaire_consent');
+    if (existingConsent) {
+      document.getElementById('consent-screen').classList.add('hidden');
+      document.getElementById('questionnaire-container').classList.remove('hidden');
+    }
+
     // Check login
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
