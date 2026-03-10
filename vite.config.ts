@@ -1,13 +1,13 @@
-import build from '@hono/vite-build/cloudflare-pages'
-import devServer from '@hono/vite-dev-server'
-import adapter from '@hono/vite-dev-server/cloudflare'
 import { defineConfig } from 'vite'
+import build from '@hono/vite-build/netlify-functions'
+import devServer from '@hono/vite-dev-server'
 
 export default defineConfig({
   plugins: [
-    build(),
+    build({
+      entry: './src/index.tsx',
+    }),
     devServer({
-      adapter,
       entry: 'src/index.tsx'
     })
   ]

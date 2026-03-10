@@ -23,8 +23,11 @@ logs/
 *.tar.gz
 *.zip
 
-# Wrangler
+# Wrangler (legacy)
 .wrangler/
+
+# Netlify
+.netlify/
 
 # Build output
 dist/

@@ -1,0 +1,20 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "dist"
+
+[dev]
+  command = "npm run dev"
+  port = 3000
+  targetPort = 5173
+
+# Static assets worden automatisch geserveerd vanuit dist/
+# De Netlify Function (dist/index.js) handelt alle dynamische routes af
+# config.preferStatic = true zorgt dat static files EERST worden geserveerd
+
+# Environment variables (stel deze in via Netlify Dashboard > Site Settings > Environment Variables)
+# SUPABASE_URL = "your-supabase-url"
+# SUPABASE_ANON_KEY = "your-supabase-anon-key"
+
+[context.production.environment]
+  NODE_VERSION = "20"

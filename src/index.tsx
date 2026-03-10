@@ -1,16 +1,17 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { env } from 'hono/adapter'
 import { getSupabase } from './lib/supabase'
 import { classifyPatient, TriageResponses } from './lib/classification'
 import { getLabRecommendations, interpretLabResults, generateRiskProfile } from './lib/lab-recommendations'
 import { generateProtocol } from './lib/protocol-engine'
 
-type Bindings = {
+type EnvVars = {
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
 }
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono()
 
 app.use('/api/*', cors())
 
@@ -18,7 +19,7 @@ app.use('/api/*', cors())
 // API: PATIENTS
 // =====================================================
 app.get('/api/patients', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const status = c.req.query('status') || 'active'
   const { data, error } = await db
     .from('patients')
@@ -30,7 +31,7 @@ app.get('/api/patients', async (c) => {
 })
 
 app.get('/api/patients/:id', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { data, error } = await db
     .from('patients')
     .select(`
@@ -47,7 +48,7 @@ app.get('/api/patients/:id', async (c) => {
 })
 
 app.post('/api/patients', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('patients')
@@ -59,7 +60,7 @@ app.post('/api/patients', async (c) => {
 })
 
 app.patch('/api/patients/:id', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('patients')
@@ -72,7 +73,7 @@ app.patch('/api/patients/:id', async (c) => {
 })
 
 app.delete('/api/patients/:id', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { error } = await db
     .from('patients')
     .update({ status: 'archived' })
@@ -83,7 +84,7 @@ app.delete('/api/patients/:id', async (c) => {
 
 // Hard delete: permanently remove patient and all related data
 app.delete('/api/patients/:id/permanent', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const id = c.req.param('id')
   // Delete in order: children first (FK constraints)
   await db.from('follow_ups').delete().eq('patient_id', id)
@@ -100,7 +101,7 @@ app.delete('/api/patients/:id/permanent', async (c) => {
 // API: ASSESSMENTS
 // =====================================================
 app.post('/api/assessments', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
 
   // Run classification
@@ -167,7 +168,7 @@ app.post('/api/assessments', async (c) => {
 })
 
 app.get('/api/assessments/:id', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { data, error } = await db
     .from('assessments')
     .select('*')
@@ -179,7 +180,7 @@ app.get('/api/assessments/:id', async (c) => {
 
 // Get all assessments for a patient (history)
 app.get('/api/assessments/patient/:patientId', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { data, error } = await db
     .from('assessments')
     .select('*')
@@ -193,7 +194,7 @@ app.get('/api/assessments/patient/:patientId', async (c) => {
 // API: LAB TESTS
 // =====================================================
 app.get('/api/lab-tests/:patientId', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { data, error } = await db
     .from('lab_tests')
     .select('*')
@@ -204,7 +205,7 @@ app.get('/api/lab-tests/:patientId', async (c) => {
 })
 
 app.patch('/api/lab-tests/:id/results', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
 
   // Interpret results
@@ -230,7 +231,7 @@ app.patch('/api/lab-tests/:id/results', async (c) => {
 // API: PROTOCOLS
 // =====================================================
 app.post('/api/protocols', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
 
   const protocol = generateProtocol(body.categories)
@@ -260,7 +261,7 @@ app.post('/api/protocols', async (c) => {
 })
 
 app.get('/api/protocols/:patientId', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { data, error } = await db
     .from('supplement_protocols')
     .select('*')
@@ -274,7 +275,7 @@ app.get('/api/protocols/:patientId', async (c) => {
 // API: PROGRESS TRACKING (with symptom scores)
 // =====================================================
 app.post('/api/progress', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
   // Ensure symptoms is a proper JSONB object
   if (body.symptoms && typeof body.symptoms === 'object') {
@@ -290,7 +291,7 @@ app.post('/api/progress', async (c) => {
 })
 
 app.get('/api/progress/:patientId', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { data, error } = await db
     .from('progress_tracking')
     .select('*')
@@ -304,7 +305,7 @@ app.get('/api/progress/:patientId', async (c) => {
 // API: FOLLOW-UPS
 // =====================================================
 app.get('/api/follow-ups/:patientId', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { data, error } = await db
     .from('follow_ups')
     .select('*')
@@ -315,7 +316,7 @@ app.get('/api/follow-ups/:patientId', async (c) => {
 })
 
 app.post('/api/follow-ups', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('follow_ups')
@@ -327,7 +328,7 @@ app.post('/api/follow-ups', async (c) => {
 })
 
 app.patch('/api/follow-ups/:id', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('follow_ups')
@@ -340,7 +341,7 @@ app.patch('/api/follow-ups/:id', async (c) => {
 })
 
 app.delete('/api/follow-ups/:id', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { error } = await db
     .from('follow_ups')
     .delete()
@@ -353,7 +354,7 @@ app.delete('/api/follow-ups/:id', async (c) => {
 // API: DASHBOARD STATS
 // =====================================================
 app.get('/api/stats', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
 
   const [patients, assessments, labTests, protocols] = await Promise.all([
     db.from('patients').select('id, status, created_at', { count: 'exact' }).eq('status', 'active'),
@@ -2017,7 +2018,7 @@ const portalNav = `
 // API: PORTAL ACCESS CODES
 // =====================================================
 app.post('/api/portal/generate-code', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { patient_id } = await c.req.json()
   
   // Generate 8-character alphanumeric code
@@ -2051,7 +2052,7 @@ app.post('/api/portal/generate-code', async (c) => {
 })
 
 app.post('/api/portal/verify-code', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const { code } = await c.req.json()
   const upperCode = code.toUpperCase().trim()
   
@@ -2086,7 +2087,7 @@ app.post('/api/portal/verify-code', async (c) => {
 
 // Portal assessment submission (from patient side)
 app.post('/api/portal/assessment', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
   const upperCode = body.portal_code?.toUpperCase()?.trim()
   
@@ -2173,7 +2174,7 @@ app.post('/api/portal/assessment', async (c) => {
 
 // Portal lab document upload (store as base64 in Supabase since no R2/Storage)
 app.post('/api/portal/lab-upload', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   const body = await c.req.json()
   const upperCode = body.portal_code?.toUpperCase()?.trim()
   
@@ -2975,7 +2976,7 @@ app.get('/portaal/lab-upload', (c) => {
 // THERAPEUT: Genereer toegangscode knop (toevoegen aan patient profiel)
 // =====================================================
 app.get('/api/patients/:id/portal-code', async (c) => {
-  const db = getSupabase(c.env)
+  const db = getSupabase(env<EnvVars>(c))
   // Try portal_code column first
   const { data, error } = await db
     .from('patients')

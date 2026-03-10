@@ -9,7 +9,7 @@
 ## URLs
 - **Preview**: https://3000-ivwhd9ktlpmi0odg58u71-0e616f0a.sandbox.novita.ai
 - **Portaal (patienten)**: https://3000-ivwhd9ktlpmi0odg58u71-0e616f0a.sandbox.novita.ai/portaal
-- **Platform**: Cloudflare Pages
+- **Platform**: Netlify (Netlify Functions)
 
 ## Voltooide Features
 
@@ -187,26 +187,69 @@
 4. Voer `supabase-migration-003-portal.sql` uit voor portal code kolom (optioneel)
 
 ### 2. Environment Variables
-In `wrangler.jsonc` of `.dev.vars`:
+
+**Lokale ontwikkeling** - in `ecosystem.config.cjs` (env sectie) of `.dev.vars`:
 ```
 SUPABASE_URL=https://jouw-project.supabase.co
 SUPABASE_ANON_KEY=jouw-anon-key
 ```
 
+**Netlify productie** - stel in via Netlify Dashboard > Site Settings > Environment Variables:
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+
 ### 3. Development
 ```bash
-npm run build
-npm run dev:sandbox  # of via PM2: pm2 start ecosystem.config.cjs
+npm install
+npm run dev          # Vite dev server (port 5173)
+# of via PM2:
+pm2 start ecosystem.config.cjs  # Vite dev server (port 3000)
+```
+
+### 4. Build & Deploy
+```bash
+npm run build        # Bouwt dist/ directory met Netlify Function
+npm run deploy       # Build + deploy naar Netlify productie
+npm run deploy:draft # Build + deploy als draft (preview URL)
 ```
 
 ## Deployment
-- **Platform**: Cloudflare Pages
+- **Platform**: Netlify (voorheen Cloudflare Pages)
+- **Build Tool**: Vite + @hono/vite-build/netlify-functions
+- **Runtime**: Netlify Functions (Node.js 20)
 - **Status**: Development
 - **Last Updated**: 2026-03-10
 
+### Hoe deployen naar Netlify:
+1. Maak een account aan op [netlify.com](https://netlify.com)
+2. Koppel je GitHub repository OF deploy handmatig:
+   ```bash
+   npm install -g netlify-cli
+   netlify login
+   netlify init          # Koppel aan nieuw of bestaand project
+   npm run deploy        # Deploy naar productie
+   ```
+3. Stel environment variables in via Netlify Dashboard:
+   - `SUPABASE_URL`
+   - `SUPABASE_ANON_KEY`
+
+### Projectstructuur (Netlify)
+```
+webapp/
+├── src/index.tsx          # Hono app (alle routes + API)
+├── public/static/         # Static assets (wordt gekopieerd naar dist/)
+├── dist/                  # Build output
+│   ├── index.js           # Netlify Function (Hono app)
+│   └── static/            # Static files
+├── netlify.toml           # Netlify configuratie
+├── vite.config.ts         # Vite build met netlify-functions plugin
+├── ecosystem.config.cjs   # PM2 configuratie voor lokale dev
+└── package.json           # Scripts: dev, build, deploy
+```
+
 ## Aanbevolen Volgende Stappen
 1. Voer alle migratie-SQL bestanden uit in Supabase SQL Editor
-2. Deploy naar Cloudflare Pages productie
+2. Deploy naar Netlify productie (`npm run deploy`)
 3. Overweeg lengte/BMI veld toevoegen aan patients tabel
 4. PDF export mogelijkheid voor protocollen
 5. E-mail notificaties voor follow-ups
