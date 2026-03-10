@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "weight-loss-app",
+  "compatibility_date": "2026-03-10",
+  "pages_build_output_dir": "./dist",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "SUPABASE_URL": "https://iswjoqoygbptgbednmhf.supabase.co",
+    "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlzd2pvcW95Z2JwdGdiZWRubWhmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxMzY2NjksImV4cCI6MjA4ODcxMjY2OX0.2KQB0xMRAikvhVCu-Uc8hyNWFtta7imguxZELaJ0jus"
+  }
+}
