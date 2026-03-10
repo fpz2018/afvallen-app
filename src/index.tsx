@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { getSupabase } from './lib/supabase'
 import { classifyPatient, TriageResponses } from './lib/classification'
-import { getLabRecommendations, interpretLabResults } from './lib/lab-recommendations'
+import { getLabRecommendations, interpretLabResults, generateRiskProfile } from './lib/lab-recommendations'
 import { generateProtocol } from './lib/protocol-engine'
 
 type Bindings = {
@@ -91,6 +91,13 @@ app.post('/api/assessments', async (c) => {
   // Run classification
   const classification = classifyPatient(body.responses as TriageResponses)
 
+  // Generate risk profile
+  const riskProfile = generateRiskProfile(
+    classification.categories,
+    classification.riskScores,
+    body.responses
+  )
+
   const assessmentData = {
     patient_id: body.patient_id,
     assessment_type: body.assessment_type || 'quick',
@@ -98,6 +105,7 @@ app.post('/api/assessments', async (c) => {
     categories: classification.categories,
     risk_scores: classification.riskScores,
     responses: body.responses,
+    risk_profile: riskProfile,
     completed: true
   }
 
@@ -115,11 +123,11 @@ app.post('/api/assessments', async (c) => {
     .update({ patient_type: classification.primaryType.charAt(0).toUpperCase() })
     .eq('id', body.patient_id)
 
-  // Generate lab recommendations
+  // Generate lab recommendations (blood + stool + other)
   const categoryIds = classification.categories.map(cat => cat.id)
-  const labPackage = getLabRecommendations(categoryIds)
+  const labPackage = getLabRecommendations(categoryIds, body.responses)
 
-  // Store lab test recommendation
+  // Store lab test recommendation (including stool tests)
   await db
     .from('lab_tests')
     .insert([{
@@ -127,12 +135,18 @@ app.post('/api/assessments', async (c) => {
       assessment_id: data.id,
       test_package: labPackage.name,
       recommended_tests: labPackage.tests,
+      blood_tests: labPackage.bloodTests,
+      stool_tests: labPackage.stoolTests,
+      other_tests: labPackage.otherTests,
+      urgency: labPackage.urgency,
+      rationale: labPackage.rationale,
       status: 'recommended'
     }])
 
   return c.json({
     assessment: data,
     classification,
+    riskProfile,
     labRecommendations: labPackage
   }, 201)
 })
@@ -701,14 +715,14 @@ app.get('/triage/:patientId', (c) => {
 </body></html>`)
 })
 
-// RESULTS PAGE
+// RESULTS PAGE - Risicoprofiel + Bloed + Ontlasting
 app.get('/results/:patientId/:assessmentId', (c) => {
   const patientId = c.req.param('patientId')
   const assessmentId = c.req.param('assessmentId')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
-  <main class="max-w-4xl mx-auto px-4 py-8">
+  <main class="max-w-5xl mx-auto px-4 py-8">
     <div class="mb-6"><a href="/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
     <div id="results-container"><p class="text-center py-12 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Resultaten laden...</p></div>
   </main>
@@ -718,7 +732,9 @@ app.get('/results/:patientId/:assessmentId', (c) => {
     const riskColors = {high:'border-red-500 bg-red-50',medium:'border-orange-500 bg-orange-50',low:'border-green-500 bg-green-50'};
     const riskLabels = {high:'HOOG RISICO',medium:'GEMIDDELD RISICO',low:'LAAG RISICO'};
     const riskTextColors = {high:'text-red-700',medium:'text-orange-700',low:'text-green-700'};
-    const iconMap = {'fa-fire':'text-red-600','fa-moon':'text-indigo-600','fa-venus':'text-pink-600','fa-brain':'text-orange-600','fa-candy-cane':'text-red-600','fa-pills':'text-blue-600','fa-dumbbell':'text-green-600'};
+    const riskBgColors = {high:'bg-red-500',medium:'bg-orange-500',low:'bg-green-500'};
+    const urgencyColors = {urgent:'bg-red-600',moderate:'bg-orange-500',routine:'bg-green-600'};
+    const categoryNames = {metabolic_resistance:'Metabole Weerstand',thyroid:'Schildklier',hormonal:'PCOS/Hormonen',cortisol:'Cortisol',insulin:'Insuline',medication:'Medicatie',standard:'Standaard'};
 
     async function loadResults() {
       try {
@@ -730,34 +746,181 @@ app.get('/results/:patientId/:assessmentId', (c) => {
         const patient = await patientRes.json();
         const assessment = await assessmentRes.json();
         const labs = await labRes.json();
-
         const categories = assessment.categories || [];
-        const hasRedFlags = categories.some(c => c.risk === 'high' || c.risk === 'medium');
+        const riskProfile = assessment.risk_profile || {};
+        const riskScores = assessment.risk_scores || {};
+        const latestLab = labs.find(l => l.assessment_id === assessmentId) || labs[0];
 
-        let html = '<div class="bg-white rounded-xl shadow"><div class="bg-gradient-to-r from-green-500 to-teal-500 text-white p-6 rounded-t-xl"><h2 class="text-2xl font-bold"><i class="fas fa-user-check mr-2"></i>Assessment Resultaat: '+patient.first_name+' '+patient.last_name+'</h2><p class="opacity-90 mt-1">Quick Triage voltooid op '+new Date(assessment.created_at).toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric'})+'</p></div><div class="p-6">';
+        let html = '';
 
-        if (hasRedFlags) {
-          html += '<div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mb-6 rounded"><p class="font-bold text-yellow-800"><i class="fas fa-exclamation-triangle mr-2"></i>Rode Vlaggen Gedetecteerd</p><p class="text-sm text-yellow-700 mt-1">Deze patiënt valt in meerdere risico-categorieën. Aanbevolen: uitgebreid lab-onderzoek en gecombineerd protocol.</p></div>';
-        }
+        // ============ SECTION 1: RISICOPROFIEL ============
+        const overallRisk = riskProfile.overallRisk || 'low';
+        const urgency = riskProfile.urgency || 'routine';
+        html += '<div class="bg-white rounded-xl shadow mb-6">';
+        html += '<div class="bg-gradient-to-r '+(overallRisk==='high'?'from-red-600 to-red-800':overallRisk==='medium'?'from-orange-500 to-orange-700':'from-green-500 to-green-700')+' text-white p-6 rounded-t-xl">';
+        html += '<div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold"><i class="fas fa-shield-alt mr-2"></i>Risicoprofiel: '+patient.first_name+' '+patient.last_name+'</h2>';
+        html += '<p class="opacity-90 mt-1">Assessment voltooid op '+new Date(assessment.created_at).toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric'})+'</p></div>';
+        html += '<div class="text-right"><div class="text-4xl font-black">'+(overallRisk==='high'?'HOOG':overallRisk==='medium'?'MIDDEN':'LAAG')+'</div><div class="text-sm opacity-90">Algeheel Risiconiveau</div></div></div></div>';
 
-        html += '<h3 class="font-bold text-lg mb-4">Geïdentificeerde Categorieën:</h3><div class="space-y-3 mb-6">';
-        categories.forEach(cat => {
-          html += '<div class="border-l-4 p-4 rounded '+riskColors[cat.risk]+'"><p class="font-bold '+riskTextColors[cat.risk]+'"><i class="fas '+cat.icon+' mr-2 '+(iconMap[cat.icon]||'')+'"></i>'+cat.name+' - '+riskLabels[cat.risk]+'</p><ul class="text-sm mt-2 ml-6 list-disc '+riskTextColors[cat.risk]+'">'+cat.triggers.map(t=>'<li>'+t+'</li>').join('')+'</ul></div>';
+        // Urgency bar
+        html += '<div class="p-6 border-b"><div class="flex items-center gap-4 mb-4"><div class="px-4 py-2 rounded-lg text-white font-bold text-sm '+(urgencyColors[urgency]||'bg-gray-500')+'"><i class="fas '+(urgency==='urgent'?'fa-exclamation-triangle':urgency==='moderate'?'fa-exclamation-circle':'fa-check-circle')+' mr-1"></i>'+(riskProfile.urgencyLabel||'Routine')+'</div></div>';
+
+        // Summary
+        html += '<div class="bg-gray-50 rounded-lg p-4 mb-4"><p class="text-gray-800 font-medium">'+( riskProfile.summary || 'Geen samenvatting beschikbaar')+'</p></div>';
+
+        // Risk scores visual
+        html += '<h4 class="font-bold text-gray-700 mb-3"><i class="fas fa-chart-bar mr-2"></i>Risicoscores per categorie</h4>';
+        html += '<div class="space-y-2 mb-4">';
+        Object.entries(riskScores).sort((a,b)=>b[1]-a[1]).forEach(([key, score]) => {
+          const pct = Math.min((score/10)*100, 100);
+          const barColor = score >= 6 ? 'bg-red-500' : score >= 4 ? 'bg-orange-500' : score >= 3 ? 'bg-yellow-400' : 'bg-green-400';
+          const threshold = score >= 4 || (key === 'thyroid' && score >= 3) || (key === 'hormonal' && score >= 3) || (key === 'medication' && score >= 3);
+          html += '<div class="flex items-center gap-3"><span class="text-xs font-semibold text-gray-600 w-36 text-right">'+(categoryNames[key]||key)+'</span><div class="flex-1 bg-gray-200 rounded-full h-5 relative"><div class="h-5 rounded-full '+barColor+' transition-all flex items-center justify-end pr-2" style="width:'+Math.max(pct,8)+'%"><span class="text-xs text-white font-bold">'+score+'</span></div></div>'+(threshold?'<i class="fas fa-exclamation-circle text-red-500 text-sm" title="Boven drempelwaarde"></i>':'<i class="fas fa-check-circle text-green-500 text-sm" title="Onder drempelwaarde"></i>')+'</div>';
         });
         html += '</div>';
 
-        // Lab recommendations
-        const latestLab = labs[0];
-        if (latestLab) {
-          const tests = latestLab.recommended_tests || [];
-          const required = tests.filter(t=>t.required);
-          const optional = tests.filter(t=>!t.required);
-          html += '<h3 class="font-bold text-lg mb-4"><i class="fas fa-flask mr-2 text-blue-600"></i>Aanbevolen Lab-Testen</h3><div class="bg-blue-50 p-4 rounded-lg mb-6"><div class="grid grid-cols-1 md:grid-cols-2 gap-4"><div><p class="font-bold text-blue-800 mb-2">Verplicht ('+required.length+'):</p><ul class="text-sm text-blue-700 space-y-1">'+required.map(t=>'<li><i class="fas fa-check mr-1"></i>'+t.name+(t.note?' <span class="text-xs text-blue-500">('+t.note+')</span>':'')+'</li>').join('')+'</ul></div><div><p class="font-bold text-blue-800 mb-2">Optioneel ('+optional.length+'):</p><ul class="text-sm text-blue-600 space-y-1">'+optional.map(t=>'<li><i class="far fa-circle mr-1"></i>'+t.name+(t.note?' <span class="text-xs text-blue-400">('+t.note+')</span>':'')+'</li>').join('')+'</ul></div></div></div>';
+        // Categories
+        html += '<h4 class="font-bold text-gray-700 mb-3"><i class="fas fa-tags mr-2"></i>Geïdentificeerde Categorieën ('+categories.length+')</h4><div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">';
+        categories.forEach(cat => {
+          html += '<div class="border-l-4 p-4 rounded-lg '+riskColors[cat.risk]+'"><div class="flex items-center justify-between mb-1"><p class="font-bold '+riskTextColors[cat.risk]+'"><i class="fas '+cat.icon+' mr-2"></i>'+cat.name+'</p><span class="text-xs font-bold px-2 py-0.5 rounded '+(cat.risk==='high'?'bg-red-200 text-red-800':cat.risk==='medium'?'bg-orange-200 text-orange-800':'bg-green-200 text-green-800')+'">'+riskLabels[cat.risk]+'</span></div><ul class="text-sm mt-1 ml-4 list-disc '+riskTextColors[cat.risk]+'">'+cat.triggers.map(t=>'<li>'+t+'</li>').join('')+'</ul></div>';
+        });
+        html += '</div>';
+
+        // Attention points
+        if (riskProfile.attentionPoints?.length) {
+          html += '<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4"><h4 class="font-bold text-yellow-800 mb-2"><i class="fas fa-exclamation-triangle mr-2"></i>Aandachtspunten voor Therapeut</h4><ul class="space-y-2">';
+          riskProfile.attentionPoints.forEach(ap => {
+            html += '<li class="flex items-start gap-2 text-sm text-yellow-800"><i class="fas fa-chevron-right mt-1 text-yellow-600"></i><span>'+ap+'</span></li>';
+          });
+          html += '</ul></div>';
         }
 
-        // Action buttons
-        html += '<div class="flex flex-wrap gap-3 mt-6"><a href="/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-user mr-2"></i>Patiëntprofiel</a><button onclick="generateProtocol()" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-file-medical mr-2"></i>Genereer Protocol</button><button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-print mr-2"></i>Print</button></div>';
+        // Special flags
+        let flagsHtml = '';
+        if (riskProfile.metabolicSyndromeRisk) flagsHtml += '<span class="px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-300"><i class="fas fa-exclamation-triangle mr-1"></i>Metabool Syndroom Risico</span>';
+        if (riskProfile.autoImmuneRisk) flagsHtml += '<span class="px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-700 border border-purple-300"><i class="fas fa-shield-virus mr-1"></i>Auto-immuun Component</span>';
+        if (riskProfile.hormonalComplexity === 'high') flagsHtml += '<span class="px-3 py-1 rounded-full text-xs font-bold bg-pink-100 text-pink-700 border border-pink-300"><i class="fas fa-venus-mars mr-1"></i>Complex Hormonaal Profiel</span>';
+        if (flagsHtml) html += '<div class="flex flex-wrap gap-2 mb-4">'+flagsHtml+'</div>';
+
+        // Recommendations
+        if (riskProfile.recommendations?.length) {
+          html += '<div class="bg-blue-50 border border-blue-200 rounded-lg p-4"><h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-lightbulb mr-2"></i>Aanbevelingen</h4><ol class="space-y-1">';
+          riskProfile.recommendations.forEach((rec, i) => {
+            html += '<li class="flex items-start gap-2 text-sm text-blue-800"><span class="font-bold text-blue-600 min-w-[20px]">'+(i+1)+'.</span><span>'+rec+'</span></li>';
+          });
+          html += '</ol></div>';
+        }
         html += '</div></div>';
+
+        // ============ SECTION 2: AANVULLEND ONDERZOEK ============
+        if (latestLab) {
+          const allTests = latestLab.recommended_tests || [];
+          const bloodTests = latestLab.blood_tests || allTests.filter(t=>t.type==='blood');
+          const stoolTests = latestLab.stool_tests || allTests.filter(t=>t.type==='stool');
+          const otherTests = latestLab.other_tests || allTests.filter(t=>!['blood','stool'].includes(t.type));
+          const labUrgency = latestLab.urgency || 'low';
+          const labRationale = latestLab.rationale || '';
+
+          html += '<div class="bg-white rounded-xl shadow mb-6">';
+          html += '<div class="bg-gradient-to-r from-blue-600 to-cyan-600 text-white p-6 rounded-t-xl"><h2 class="text-2xl font-bold"><i class="fas fa-flask mr-2"></i>Aanvullend Onderzoek</h2><p class="opacity-90 mt-1">Automatisch gegenereerd op basis van risicoprofiel</p></div>';
+
+          // Rationale
+          html += '<div class="p-6 border-b"><div class="bg-blue-50 rounded-lg p-4 mb-4"><p class="text-sm text-blue-800"><i class="fas fa-info-circle mr-2"></i>'+labRationale+'</p></div>';
+
+          // Urgency badge
+          html += '<div class="flex items-center gap-3 mb-4"><span class="px-3 py-1 rounded-lg text-sm font-bold text-white '+(labUrgency==='high'?'bg-red-500':labUrgency==='medium'?'bg-orange-500':'bg-green-500')+'">'+(labUrgency==='high'?'Urgent':labUrgency==='medium'?'Prioriteit':'Routine')+'</span><span class="text-sm text-gray-600">Totaal: '+(bloodTests.length+stoolTests.length+otherTests.length)+' testen ('+(allTests.filter(t=>t.required).length)+' verplicht, '+(allTests.filter(t=>!t.required).length)+' optioneel)</span></div></div>';
+
+          // BLOED
+          if (bloodTests.length) {
+            const reqBlood = bloodTests.filter(t=>t.required);
+            const optBlood = bloodTests.filter(t=>!t.required);
+            html += '<div class="p-6 border-b"><h3 class="font-bold text-lg mb-4 flex items-center"><i class="fas fa-tint mr-2 text-red-500"></i>Bloedonderzoek <span class="ml-2 px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700">'+bloodTests.length+' testen</span></h3>';
+
+            // Required blood tests
+            if (reqBlood.length) {
+              html += '<h4 class="font-semibold text-gray-700 mb-2"><i class="fas fa-check-circle text-green-600 mr-1"></i>Verplicht ('+reqBlood.length+')</h4>';
+              html += '<div class="grid grid-cols-1 gap-2 mb-4">';
+              reqBlood.forEach(t => {
+                html += '<div class="border border-gray-200 rounded-lg p-3 hover:shadow-sm transition"><div class="flex items-start justify-between"><div class="flex-1"><div class="flex items-center gap-2"><span class="font-semibold text-gray-800">'+t.name+'</span><span class="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-600">'+t.category+'</span></div>';
+                if (t.rationale) html += '<p class="text-sm text-gray-600 mt-1"><i class="fas fa-lightbulb text-yellow-500 mr-1"></i>'+t.rationale+'</p>';
+                if (t.timing) html += '<p class="text-xs text-blue-600 mt-1"><i class="far fa-clock mr-1"></i>'+t.timing+'</p>';
+                if (t.note) html += '<p class="text-xs text-orange-600 mt-1"><i class="fas fa-info-circle mr-1"></i>'+t.note+'</p>';
+                html += '</div></div></div>';
+              });
+              html += '</div>';
+            }
+
+            // Optional blood tests
+            if (optBlood.length) {
+              html += '<details class="mb-2"><summary class="cursor-pointer font-semibold text-gray-600 hover:text-gray-800"><i class="far fa-circle mr-1"></i>Optioneel ('+optBlood.length+') - klik om te bekijken</summary>';
+              html += '<div class="grid grid-cols-1 gap-2 mt-2">';
+              optBlood.forEach(t => {
+                html += '<div class="border border-dashed border-gray-200 rounded-lg p-3 bg-gray-50/50"><div class="flex-1"><div class="flex items-center gap-2"><span class="font-medium text-gray-700">'+t.name+'</span><span class="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500">'+t.category+'</span></div>';
+                if (t.rationale) html += '<p class="text-sm text-gray-500 mt-1"><i class="fas fa-lightbulb text-yellow-400 mr-1"></i>'+t.rationale+'</p>';
+                if (t.note) html += '<p class="text-xs text-orange-500 mt-1"><i class="fas fa-info-circle mr-1"></i>'+t.note+'</p>';
+                html += '</div></div>';
+              });
+              html += '</div></details>';
+            }
+            html += '</div>';
+          }
+
+          // ONTLASTING
+          if (stoolTests.length) {
+            const reqStool = stoolTests.filter(t=>t.required);
+            const optStool = stoolTests.filter(t=>!t.required);
+            html += '<div class="p-6 border-b"><h3 class="font-bold text-lg mb-4 flex items-center"><i class="fas fa-vial mr-2 text-amber-600"></i>Ontlastingsonderzoek <span class="ml-2 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-700">'+stoolTests.length+' testen</span></h3>';
+
+            html += '<div class="bg-amber-50 border-l-4 border-amber-500 p-3 rounded mb-4 text-sm text-amber-800"><i class="fas fa-info-circle mr-1"></i><strong>Afname-instructie:</strong> Gebruik de eerste ontlasting van de dag. Verzamel in de meegeleverde buis. Bewaar gekoeld tot verzending. Verstuur op maandag t/m woensdag.</div>';
+
+            if (reqStool.length) {
+              html += '<h4 class="font-semibold text-gray-700 mb-2"><i class="fas fa-check-circle text-green-600 mr-1"></i>Verplicht ('+reqStool.length+')</h4>';
+              html += '<div class="grid grid-cols-1 gap-2 mb-4">';
+              reqStool.forEach(t => {
+                html += '<div class="border border-amber-200 rounded-lg p-3 bg-amber-50/30 hover:shadow-sm transition"><div class="flex-1"><div class="flex items-center gap-2"><span class="font-semibold text-gray-800">'+t.name+'</span><span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">'+t.category+'</span></div>';
+                if (t.rationale) html += '<p class="text-sm text-gray-600 mt-1"><i class="fas fa-lightbulb text-yellow-500 mr-1"></i>'+t.rationale+'</p>';
+                if (t.specimen) html += '<p class="text-xs text-amber-700 mt-1"><i class="fas fa-vial mr-1"></i>Materiaal: '+t.specimen+'</p>';
+                html += '</div></div>';
+              });
+              html += '</div>';
+            }
+
+            if (optStool.length) {
+              html += '<details class="mb-2"><summary class="cursor-pointer font-semibold text-gray-600 hover:text-gray-800"><i class="far fa-circle mr-1"></i>Optioneel ('+optStool.length+') - klik om te bekijken</summary>';
+              html += '<div class="grid grid-cols-1 gap-2 mt-2">';
+              optStool.forEach(t => {
+                html += '<div class="border border-dashed border-amber-200 rounded-lg p-3 bg-gray-50/50"><div class="flex-1"><div class="flex items-center gap-2"><span class="font-medium text-gray-700">'+t.name+'</span><span class="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500">'+t.category+'</span></div>';
+                if (t.rationale) html += '<p class="text-sm text-gray-500 mt-1"><i class="fas fa-lightbulb text-yellow-400 mr-1"></i>'+t.rationale+'</p>';
+                if (t.note) html += '<p class="text-xs text-orange-500 mt-1"><i class="fas fa-info-circle mr-1"></i>'+t.note+'</p>';
+                html += '</div></div>';
+              });
+              html += '</div></details>';
+            }
+            html += '</div>';
+          }
+
+          // OTHER TESTS (urine, speeksel)
+          if (otherTests.length) {
+            html += '<div class="p-6 border-b"><h3 class="font-bold text-lg mb-4 flex items-center"><i class="fas fa-microscope mr-2 text-purple-600"></i>Overig Onderzoek <span class="ml-2 px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">'+otherTests.length+' testen</span></h3>';
+            html += '<div class="grid grid-cols-1 gap-2">';
+            otherTests.forEach(t => {
+              const typeLabel = {urine:'Urine',saliva:'Speeksel',other:'Overig'}[t.type]||t.type;
+              html += '<div class="border border-purple-200 rounded-lg p-3 bg-purple-50/30"><div class="flex-1"><div class="flex items-center gap-2"><span class="font-semibold text-gray-800">'+t.name+'</span><span class="text-xs px-2 py-0.5 rounded bg-purple-100 text-purple-700">'+typeLabel+'</span>'+(t.required?'<span class="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">Verplicht</span>':'<span class="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500">Optioneel</span>')+'</div>';
+              if (t.rationale) html += '<p class="text-sm text-gray-600 mt-1"><i class="fas fa-lightbulb text-yellow-500 mr-1"></i>'+t.rationale+'</p>';
+              if (t.timing) html += '<p class="text-xs text-purple-600 mt-1"><i class="far fa-clock mr-1"></i>'+t.timing+'</p>';
+              if (t.specimen) html += '<p class="text-xs text-purple-700 mt-1"><i class="fas fa-vial mr-1"></i>'+t.specimen+'</p>';
+              html += '</div></div>';
+            });
+            html += '</div></div>';
+          }
+
+          // Lab entry link
+          html += '<div class="p-6"><a href="/lab-entry/'+patientId+'/'+latestLab.id+'" class="inline-block bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-edit mr-2"></i>Resultaten Invoeren</a></div>';
+          html += '</div>';
+        }
+
+        // ============ ACTION BUTTONS ============
+        html += '<div class="bg-white rounded-xl shadow p-6 flex flex-wrap gap-3"><a href="/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-user mr-2"></i>Patiëntprofiel</a><a href="/assessment/'+patientId+'/'+assessmentId+'" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700"><i class="fas fa-clipboard-list mr-2"></i>Assessment Details</a><button onclick="generateProtocol()" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-file-medical mr-2"></i>Genereer Protocol</button><button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-print mr-2"></i>Print</button></div>';
 
         document.getElementById('results-container').innerHTML = html;
       } catch(e) {
@@ -930,19 +1093,19 @@ app.get('/patient/:id', (c) => {
 </body></html>`)
 })
 
-// LAB RESULTS ENTRY PAGE
+// LAB RESULTS ENTRY PAGE (Bloed + Ontlasting)
 app.get('/lab-entry/:patientId/:labId', (c) => {
   const patientId = c.req.param('patientId')
   const labId = c.req.param('labId')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
-  <main class="max-w-3xl mx-auto px-4 py-8">
+  <main class="max-w-4xl mx-auto px-4 py-8">
     <div class="mb-6"><a href="/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
     <div class="bg-white rounded-xl shadow">
       <div class="bg-gradient-to-r from-green-500 to-teal-500 text-white p-6 rounded-t-xl">
         <h2 class="text-2xl font-bold"><i class="fas fa-vial mr-2"></i>Lab-resultaten Invoeren</h2>
-        <p class="opacity-90 mt-1">Voer de lab-waarden in voor automatische interpretatie</p>
+        <p class="opacity-90 mt-1">Voer bloed- en ontlastingswaarden in voor automatische interpretatie</p>
       </div>
       <div id="lab-form-container" class="p-6">
         <p class="text-center py-8 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Laden...</p>
@@ -954,13 +1117,30 @@ app.get('/lab-entry/:patientId/:labId', (c) => {
     const labId = '${labId}';
 
     const refRanges = {
+      // Bloed
       TSH:{unit:'mU/L',min:0.4,max:2.5},fT4:{unit:'pmol/L',min:12,max:22},fT3:{unit:'pmol/L',min:4.0,max:6.5},
       INS:{unit:'mU/L',min:2,max:6},HOMA:{unit:'',min:0.5,max:2.0},CORT:{unit:'nmol/L',min:250,max:700},
       FER:{unit:'µg/L',min:30,max:100},VITD:{unit:'nmol/L',min:75,max:125},COQ10:{unit:'µmol/L',min:0.5,max:1.5},
       HBA1C:{unit:'%',min:4.0,max:5.6},CRP:{unit:'mg/L',min:0,max:1.0},GLUC:{unit:'mmol/L',min:3.9,max:5.5},
       CHOL:{unit:'mmol/L',min:0,max:5.0},HDL:{unit:'mmol/L',min:1.0,max:99},LDL:{unit:'mmol/L',min:0,max:3.0},
-      TG:{unit:'mmol/L',min:0,max:1.7},B12:{unit:'pmol/L',min:300,max:900}
+      TG:{unit:'mmol/L',min:0,max:1.7},B12:{unit:'pmol/L',min:300,max:900},HCY:{unit:'µmol/L',min:5,max:10},
+      LEPT:{unit:'ng/mL',min:4,max:15},MG_RBC:{unit:'mmol/L',min:2.0,max:2.6},
+      ALAT:{unit:'U/L',min:0,max:35},ASAT:{unit:'U/L',min:0,max:35},GGT:{unit:'U/L',min:0,max:40},
+      HB:{unit:'mmol/L',min:7.5,max:10.0},MCV:{unit:'fL',min:80,max:100},CREA:{unit:'µmol/L',min:50,max:100},
+      DHEAS:{unit:'µmol/L',min:2.5,max:10},TESTO:{unit:'nmol/L',min:0.3,max:2.0},
+      SHBG:{unit:'nmol/L',min:30,max:120},SE:{unit:'µg/L',min:70,max:150},ZN:{unit:'µmol/L',min:11,max:18},
+      CR:{unit:'nmol/L',min:1.5,max:7.0},CK:{unit:'U/L',min:25,max:200},FOL:{unit:'nmol/L',min:10,max:45},
+      // Ontlasting
+      CALPRO:{unit:'µg/g',min:0,max:50},ZONULIN:{unit:'ng/mL',min:0,max:107},
+      PE1:{unit:'µg/g',min:200,max:10000},SIGA:{unit:'µg/mL',min:510,max:2040},
+      SCFA:{unit:'µmol/g',min:70,max:150},BGLUC:{unit:'U/mL',min:0,max:1000},
     };
+
+    function renderTestInput(t, ref) {
+      const typeIcon = t.type==='stool'?'<i class="fas fa-vial text-amber-500 mr-1"></i>':t.type==='urine'?'<i class="fas fa-tint text-yellow-500 mr-1"></i>':t.type==='saliva'?'<i class="fas fa-tint text-blue-400 mr-1"></i>':'<i class="fas fa-tint text-red-400 mr-1"></i>';
+      const bgClass = t.type==='stool'?'bg-amber-50/50':t.type==='urine'?'bg-yellow-50/30':'';
+      return '<div class="flex items-center gap-4 border-b pb-3 '+bgClass+' p-2 rounded"><div class="flex-1"><label class="block text-sm font-semibold text-gray-700">'+typeIcon+t.name+'</label>'+(ref?'<span class="text-xs text-gray-400">Optimaal: '+ref.min+' - '+ref.max+' '+ref.unit+'</span>':'<span class="text-xs text-gray-300">Geen referentie</span>')+(t.note?'<span class="text-xs text-blue-500 block">'+t.note+'</span>':'')+(t.rationale?'<span class="text-xs text-gray-400 block italic">'+t.rationale.substring(0,80)+'...</span>':'')+'</div><div class="w-40"><input name="'+t.code+'" type="number" step="0.01" class="w-full border rounded px-3 py-2 text-right" placeholder="Waarde"></div><span class="text-sm text-gray-400 w-20">'+(ref?ref.unit:'')+'</span></div>';
+    }
 
     async function loadLabForm() {
       try {
@@ -969,28 +1149,59 @@ app.get('/lab-entry/:patientId/:labId', (c) => {
         const lab = labs.find(l=>l.id===labId);
         if(!lab) { document.getElementById('lab-form-container').innerHTML='<p class="text-red-500">Lab test niet gevonden</p>'; return; }
 
-        const tests = lab.recommended_tests || [];
-        let html = '<form onsubmit="submitResults(event)" class="space-y-4">';
-        html += '<div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded"><p class="text-sm text-blue-700"><i class="fas fa-info-circle mr-1"></i>Voer alleen de waarden in die beschikbaar zijn. De optimale range wordt getoond als referentie.</p></div>';
+        const allTests = lab.recommended_tests || [];
+        const bloodTests = allTests.filter(t=>t.type==='blood'||!t.type);
+        const stoolTests = allTests.filter(t=>t.type==='stool');
+        const otherTests = allTests.filter(t=>t.type&&!['blood','stool'].includes(t.type));
 
-        const required = tests.filter(t=>t.required);
-        const optional = tests.filter(t=>!t.required);
+        let html = '<form onsubmit="submitResults(event)" class="space-y-6">';
+        html += '<div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded"><p class="text-sm text-blue-700"><i class="fas fa-info-circle mr-1"></i>Voer alleen de waarden in die beschikbaar zijn. De <strong>optimale</strong> range wordt getoond (niet de standaard lab referentie).</p></div>';
 
-        html += '<h3 class="font-bold text-lg">Verplichte testen</h3>';
-        required.forEach(t => {
-          const ref = refRanges[t.code];
-          html += '<div class="flex items-center gap-4 border-b pb-3"><div class="flex-1"><label class="block text-sm font-semibold text-gray-700">'+t.name+'</label>'+(ref?'<span class="text-xs text-gray-400">Optimaal: '+ref.min+' - '+ref.max+' '+ref.unit+'</span>':'')+'</div><div class="w-40"><input name="'+t.code+'" type="number" step="0.01" class="w-full border rounded px-3 py-2 text-right" placeholder="Waarde"></div><span class="text-sm text-gray-400 w-16">'+(ref?ref.unit:'')+'</span></div>';
-        });
-
-        if (optional.length) {
-          html += '<h3 class="font-bold text-lg mt-6">Optionele testen</h3>';
-          optional.forEach(t => {
-            const ref = refRanges[t.code];
-            html += '<div class="flex items-center gap-4 border-b pb-3"><div class="flex-1"><label class="block text-sm font-semibold text-gray-700">'+t.name+'</label>'+(ref?'<span class="text-xs text-gray-400">Optimaal: '+ref.min+' - '+ref.max+' '+ref.unit+'</span>':'')+(t.note?'<span class="text-xs text-blue-500 block">'+t.note+'</span>':'')+'</div><div class="w-40"><input name="'+t.code+'" type="number" step="0.01" class="w-full border rounded px-3 py-2 text-right" placeholder="Waarde"></div><span class="text-sm text-gray-400 w-16">'+(ref?ref.unit:'')+'</span></div>';
-          });
+        // BLOED
+        if (bloodTests.length) {
+          const reqBlood = bloodTests.filter(t=>t.required);
+          const optBlood = bloodTests.filter(t=>!t.required);
+          html += '<div><h3 class="font-bold text-lg flex items-center mb-3"><i class="fas fa-tint mr-2 text-red-500"></i>Bloedonderzoek ('+bloodTests.length+' testen)</h3>';
+          if (reqBlood.length) {
+            html += '<h4 class="text-sm font-semibold text-gray-600 mb-2">Verplicht ('+reqBlood.length+')</h4><div class="space-y-2">';
+            reqBlood.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            html += '</div>';
+          }
+          if (optBlood.length) {
+            html += '<details class="mt-4"><summary class="cursor-pointer text-sm font-semibold text-gray-600 hover:text-gray-800 mb-2"><i class="far fa-circle mr-1"></i>Optioneel ('+optBlood.length+') - klik om te tonen</summary><div class="space-y-2">';
+            optBlood.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            html += '</div></details>';
+          }
+          html += '</div>';
         }
 
-        html += '<div class="flex gap-4 mt-6"><button type="submit" class="bg-green-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-save mr-2"></i>Opslaan & Interpreteer</button><a href="/patient/'+patientId+'" class="px-6 py-3 rounded-lg border text-gray-600 hover:bg-gray-50">Annuleren</a></div></form>';
+        // ONTLASTING
+        if (stoolTests.length) {
+          const reqStool = stoolTests.filter(t=>t.required);
+          const optStool = stoolTests.filter(t=>!t.required);
+          html += '<div class="border-t pt-6"><h3 class="font-bold text-lg flex items-center mb-3"><i class="fas fa-vial mr-2 text-amber-600"></i>Ontlastingsonderzoek ('+stoolTests.length+' testen)</h3>';
+          html += '<div class="bg-amber-50 border-l-4 border-amber-500 p-3 rounded mb-3 text-sm text-amber-800"><i class="fas fa-info-circle mr-1"></i>Ontlastingsonderzoek wordt door gespecialiseerd lab verwerkt. Resultaten kunnen 1-2 weken duren.</div>';
+          if (reqStool.length) {
+            html += '<h4 class="text-sm font-semibold text-gray-600 mb-2">Verplicht ('+reqStool.length+')</h4><div class="space-y-2">';
+            reqStool.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            html += '</div>';
+          }
+          if (optStool.length) {
+            html += '<details class="mt-4"><summary class="cursor-pointer text-sm font-semibold text-gray-600 hover:text-gray-800 mb-2"><i class="far fa-circle mr-1"></i>Optioneel ('+optStool.length+')</summary><div class="space-y-2">';
+            optStool.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            html += '</div></details>';
+          }
+          html += '</div>';
+        }
+
+        // OVERIG
+        if (otherTests.length) {
+          html += '<div class="border-t pt-6"><h3 class="font-bold text-lg flex items-center mb-3"><i class="fas fa-microscope mr-2 text-purple-600"></i>Overig ('+otherTests.length+' testen)</h3><div class="space-y-2">';
+          otherTests.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+          html += '</div></div>';
+        }
+
+        html += '<div class="flex gap-4 mt-6 border-t pt-6"><button type="submit" class="bg-green-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-save mr-2"></i>Opslaan & Interpreteer</button><a href="/patient/'+patientId+'" class="px-6 py-3 rounded-lg border text-gray-600 hover:bg-gray-50">Annuleren</a></div></form>';
 
         document.getElementById('lab-form-container').innerHTML = html;
       } catch(e) {
