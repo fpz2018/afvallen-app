@@ -590,6 +590,32 @@ app.get('/api/assessments/:id', async (c) => {
   return c.json(data)
 })
 
+// Update review status (admin marks assessment as reviewed)
+app.patch('/api/assessments/:id/review', async (c) => {
+  const db = getSupabase(env<EnvVars>(c))
+  const { review_status, reviewer_notes } = await c.req.json()
+  
+  if (!review_status || !['pending_review', 'reviewed', 'needs_followup'].includes(review_status)) {
+    return c.json({ error: 'Ongeldige review status' }, 400)
+  }
+  
+  const updateData: any = { 
+    review_status,
+    reviewed_at: review_status === 'reviewed' ? new Date().toISOString() : null
+  }
+  if (reviewer_notes !== undefined) updateData.reviewer_notes = reviewer_notes
+  
+  const { data, error } = await db
+    .from('assessments')
+    .update(updateData)
+    .eq('id', c.req.param('id'))
+    .select()
+    .single()
+  
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
 // Get all assessments for a patient (history)
 app.get('/api/assessments/patient/:patientId', async (c) => {
   const db = getSupabase(env<EnvVars>(c))
@@ -2797,8 +2823,31 @@ app.get('/admin/assessment/:patientId/:assessmentId', (c) => {
 
         let html = '';
 
+        // Review status
+        const reviewStatus = assessment.review_status || 'pending_review';
+        const reviewBadge = reviewStatus === 'reviewed' 
+          ? '<span class="bg-green-500/30 text-green-100 px-3 py-1 rounded-full text-xs font-bold"><i class="fas fa-check-circle mr-1"></i>Beoordeeld</span>'
+          : reviewStatus === 'needs_followup'
+          ? '<span class="bg-yellow-500/30 text-yellow-100 px-3 py-1 rounded-full text-xs font-bold"><i class="fas fa-exclamation-circle mr-1"></i>Vervolg nodig</span>'
+          : '<span class="bg-orange-500/30 text-orange-100 px-3 py-1 rounded-full text-xs font-bold"><i class="fas fa-hourglass-half mr-1"></i>Wacht op beoordeling</span>';
+
         // Header
-        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-blue-600 to-cyan-600 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold"><i class="fas fa-clipboard-list mr-2"></i>'+typeLabel+': '+patient.first_name+' '+patient.last_name+'</h2><p class="opacity-90 mt-1"><i class="far fa-calendar mr-1"></i> '+date+'</p></div><div class="flex gap-2"><a href="/admin/results/'+patientId+'/'+assessmentId+'" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-chart-bar mr-1"></i>Resultaten</a><button onclick="window.print()" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-print mr-1"></i>Print</button></div></div></div>';
+        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-blue-600 to-cyan-600 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold"><i class="fas fa-clipboard-list mr-2"></i>'+typeLabel+': '+patient.first_name+' '+patient.last_name+'</h2><p class="opacity-90 mt-1"><i class="far fa-calendar mr-1"></i> '+date+' &nbsp; '+reviewBadge+'</p></div><div class="flex gap-2"><a href="/admin/results/'+patientId+'/'+assessmentId+'" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-chart-bar mr-1"></i>Resultaten</a><button onclick="window.print()" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-print mr-1"></i>Print</button></div></div></div>';
+
+        // Review actie balk
+        if (reviewStatus !== 'reviewed') {
+          html += '<div class="bg-amber-50 border-b border-amber-200 p-4 flex items-center justify-between flex-wrap gap-3">';
+          html += '<div class="flex items-center gap-2"><i class="fas fa-user-check text-amber-600"></i><span class="text-sm font-semibold text-amber-800">Deze assessment wacht op jouw beoordeling. De patiënt kan de resultaten nog niet zien.</span></div>';
+          html += '<div class="flex gap-2">';
+          html += '<button onclick="markReviewed()" id="review-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-700 transition"><i class="fas fa-check-circle mr-1"></i>Beoordeling vrijgeven</button>';
+          html += '<button onclick="markFollowup()" class="bg-yellow-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-yellow-600 transition"><i class="fas fa-exclamation-circle mr-1"></i>Vervolg nodig</button>';
+          html += '</div></div>';
+        } else {
+          html += '<div class="bg-green-50 border-b border-green-200 p-4 flex items-center gap-2">';
+          html += '<i class="fas fa-check-circle text-green-600"></i><span class="text-sm font-semibold text-green-800">Beoordeeld'+(assessment.reviewed_at ? ' op '+new Date(assessment.reviewed_at).toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '')+' — patiënt kan de resultaten nu bekijken.</span>';
+          html += '<button onclick="undoReview()" class="ml-auto text-xs text-green-600 hover:text-green-800 underline">Intrekken</button>';
+          html += '</div>';
+        }
 
         // Categorisering samenvatting
         html += '<div class="p-6 border-b"><h3 class="font-bold text-lg mb-3"><i class="fas fa-tags mr-2 text-primary-600"></i>Categorisering</h3><div class="flex flex-wrap gap-2 mb-4">';
@@ -2873,6 +2922,47 @@ app.get('/admin/assessment/:patientId/:assessmentId', (c) => {
       } catch(e) {
         document.getElementById('assessment-detail').innerHTML = '<p class="text-red-500 text-center py-12">Fout bij laden: '+e.message+'</p>';
       }
+    }
+
+    async function markReviewed() {
+      if (!confirm('Weet je zeker dat je de beoordeling wilt vrijgeven? De patiënt kan dan de resultaten bekijken.')) return;
+      const btn = document.getElementById('review-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>Bezig...';
+      try {
+        const res = await fetch('/api/assessments/'+assessmentId+'/review', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review_status: 'reviewed' })
+        });
+        if (res.ok) { location.reload(); }
+        else { const d = await res.json(); alert('Fout: '+(d.error||'Onbekend')); btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle mr-1"></i>Beoordeling vrijgeven'; }
+      } catch(e) { alert('Verbindingsfout'); btn.disabled = false; btn.innerHTML = '<i class="fas fa-check-circle mr-1"></i>Beoordeling vrijgeven'; }
+    }
+
+    async function markFollowup() {
+      const notes = prompt('Optioneel: notitie voor vervolgactie');
+      try {
+        const res = await fetch('/api/assessments/'+assessmentId+'/review', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review_status: 'needs_followup', reviewer_notes: notes || '' })
+        });
+        if (res.ok) { location.reload(); }
+        else { const d = await res.json(); alert('Fout: '+(d.error||'Onbekend')); }
+      } catch(e) { alert('Verbindingsfout'); }
+    }
+
+    async function undoReview() {
+      if (!confirm('Wilt u de beoordeling intrekken? De patiënt kan dan de resultaten niet meer zien.')) return;
+      try {
+        const res = await fetch('/api/assessments/'+assessmentId+'/review', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ review_status: 'pending_review' })
+        });
+        if (res.ok) { location.reload(); }
+      } catch(e) { alert('Verbindingsfout'); }
     }
 
     loadAssessmentDetail();
@@ -3017,6 +3107,7 @@ const portalNav = `
     </a>
     <div class="flex items-center gap-3">
       <a href="/" class="hidden sm:inline-flex px-3 py-2 rounded-lg hover:bg-gray-100 text-sm text-gray-600 font-medium transition"><i class="fas fa-home mr-1"></i> Home</a>
+      <a href="/aanmelden" class="hidden sm:inline-flex px-3 py-2 rounded-lg hover:bg-gray-100 text-sm text-gray-600 font-medium transition"><i class="fas fa-user-plus mr-1"></i> Aanmelden</a>
       <a href="/inloggen" class="bg-portal-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-portal-700 transition shadow-sm"><i class="fas fa-sign-in-alt mr-1"></i> Inloggen</a>
     </div>
   </div>
@@ -3025,6 +3116,94 @@ const portalNav = `
 // =====================================================
 // API: PORTAL ACCESS CODES
 // =====================================================
+
+// Zelf-registratie: patiënt maakt zelf een account aan
+app.post('/api/portal/register', async (c) => {
+  const db = getSupabase(env<EnvVars>(c))
+  const body = await c.req.json()
+  const { first_name, last_name, email, gender, date_of_birth } = body
+
+  // Validatie
+  if (!first_name?.trim() || !last_name?.trim() || !email?.trim()) {
+    return c.json({ error: 'Voornaam, achternaam en email zijn verplicht.' }, 400)
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return c.json({ error: 'Voer een geldig emailadres in.' }, 400)
+  }
+
+  // Check of email al bestaat
+  const { data: existing } = await db
+    .from('patients')
+    .select('id, portal_code, first_name')
+    .eq('email', email.trim().toLowerCase())
+    .eq('status', 'active')
+    .single()
+
+  if (existing) {
+    // Patiënt bestaat al — stuur bestaande code of genereer nieuwe
+    if (existing.portal_code) {
+      return c.json({ 
+        success: true, 
+        code: existing.portal_code, 
+        patient_name: existing.first_name,
+        existing: true,
+        message: 'Er bestaat al een account met dit emailadres. Hier is je toegangscode.'
+      })
+    }
+    // Genereer code voor bestaande patiënt zonder code
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    let code = ''
+    for (let i = 0; i < 8; i++) code += chars.charAt(Math.floor(Math.random() * chars.length))
+    
+    await db.from('patients').update({ 
+      portal_code: code, 
+      portal_code_created_at: new Date().toISOString() 
+    }).eq('id', existing.id)
+
+    return c.json({ 
+      success: true, 
+      code, 
+      patient_name: existing.first_name,
+      existing: true,
+      message: 'Er bestaat al een account met dit emailadres. Hier is je nieuwe toegangscode.'
+    })
+  }
+
+  // Genereer 8-karakter toegangscode
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  for (let i = 0; i < 8; i++) code += chars.charAt(Math.floor(Math.random() * chars.length))
+
+  // Maak patiënt aan
+  const { data: patient, error } = await db
+    .from('patients')
+    .insert([{
+      first_name: first_name.trim(),
+      last_name: last_name.trim(),
+      email: email.trim().toLowerCase(),
+      gender: gender || null,
+      date_of_birth: date_of_birth || null,
+      status: 'active',
+      portal_code: code,
+      portal_code_created_at: new Date().toISOString()
+    }])
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Register error:', error)
+    return c.json({ error: 'Er ging iets mis bij het aanmaken. Probeer opnieuw.' }, 500)
+  }
+
+  return c.json({ 
+    success: true, 
+    code, 
+    patient_name: first_name.trim(),
+    existing: false,
+    message: 'Je account is aangemaakt!'
+  })
+})
+
 app.post('/api/portal/generate-code', async (c) => {
   const db = getSupabase(env<EnvVars>(c))
   const { patient_id } = await c.req.json()
@@ -3134,7 +3313,8 @@ app.post('/api/portal/assessment', async (c) => {
     risk_scores: classification.riskScores,
     responses: body.responses,
     risk_profile: riskProfile,
-    completed: true
+    completed: true,
+    review_status: 'pending_review'
   }
   
   const { data, error } = await db
@@ -3173,10 +3353,9 @@ app.post('/api/portal/assessment', async (c) => {
   return c.json({
     success: true,
     assessment_id: data.id,
-    categories: classification.categories.map(c => ({ name: c.name, risk: c.risk })),
-    primaryType: classification.primaryType,
-    overallRisk: riskProfile.overallRisk,
-    recommendations: riskProfile.recommendations || []
+    responses: body.responses,
+    review_status: 'pending_review',
+    message: 'Uw vragenlijst is ontvangen. Uw therapeut beoordeelt uw antwoorden en neemt contact met u op.'
   }, 201)
 })
 
@@ -3465,11 +3644,16 @@ app.get('/', (c) => {
   <section class="py-16 hero-pattern bg-gradient-to-br from-portal-700 via-portal-800 to-teal-900 text-white">
     <div class="max-w-3xl mx-auto px-4 text-center">
       <h2 class="text-3xl md:text-4xl font-black mb-4">Krijg grip op je biologie</h2>
-      <p class="text-white/80 text-lg mb-10 max-w-xl mx-auto">Start vandaag nog met jouw persoonlijke analyse. Heeft u een toegangscode ontvangen van uw therapeut?</p>
-      <a href="/inloggen" class="bg-white text-portal-700 px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition shadow-lg hover:shadow-xl inline-block">
-        <i class="fas fa-arrow-right mr-2"></i>Start mijn analyse
-      </a>
-      <p class="text-sm text-white/50 mt-6">Nog geen toegangscode? Neem contact op met Fysiopraktijk Zeist.</p>
+      <p class="text-white/80 text-lg mb-10 max-w-xl mx-auto">Start vandaag nog met jouw persoonlijke analyse. Meld je gratis aan en ontdek wat jouw lichaam nodig heeft.</p>
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <a href="/aanmelden" class="bg-white text-portal-700 px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition shadow-lg hover:shadow-xl inline-block">
+          <i class="fas fa-user-plus mr-2"></i>Gratis aanmelden
+        </a>
+        <a href="/inloggen" class="border-2 border-white/40 text-white px-8 py-4 rounded-xl font-semibold text-lg hover:bg-white/10 transition inline-block">
+          <i class="fas fa-sign-in-alt mr-2"></i>Ik heb al een code
+        </a>
+      </div>
+      <p class="text-sm text-white/50 mt-6">Geen account nodig — alleen je basisgegevens. Binnen 2 minuten klaar.</p>
     </div>
   </section>
 
@@ -3480,6 +3664,178 @@ app.get('/', (c) => {
       <p class="text-xs mt-2">Fysiotherapie &bull; Orthomoleculaire Therapie &bull; KPNI | <a href="#disclaimer" class="underline hover:text-white transition">Disclaimer</a></p>
     </div>
   </footer>
+</body></html>`)
+})
+
+// AANMELD PAGINA
+app.get('/aanmelden', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-lg mx-auto px-4 py-12">
+    
+    <!-- Aanmeldformulier -->
+    <div id="register-form-container" class="bg-white rounded-2xl shadow-lg p-8 fade-in">
+      <div class="text-center mb-8">
+        <div class="w-20 h-20 bg-portal-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-user-plus text-portal-600 text-3xl"></i>
+        </div>
+        <h2 class="text-2xl font-black text-gray-800">Gratis aanmelden</h2>
+        <p class="text-gray-500 mt-2">Start je persoonlijke analyse. Vul je gegevens in en ontvang direct je toegangscode.</p>
+      </div>
+      
+      <div id="reg-error" class="hidden bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm mb-6"></div>
+
+      <form id="register-form" class="space-y-5">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-bold text-gray-700 mb-1.5">Voornaam <span class="text-red-400">*</span></label>
+            <input type="text" id="reg-first-name" required placeholder="Bijv. Jan"
+              class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-portal-500 focus:border-portal-500 transition text-gray-800">
+          </div>
+          <div>
+            <label class="block text-sm font-bold text-gray-700 mb-1.5">Achternaam <span class="text-red-400">*</span></label>
+            <input type="text" id="reg-last-name" required placeholder="Bijv. de Vries"
+              class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-portal-500 focus:border-portal-500 transition text-gray-800">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-bold text-gray-700 mb-1.5">Email <span class="text-red-400">*</span></label>
+          <input type="email" id="reg-email" required placeholder="jan.devries@email.nl"
+            class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-portal-500 focus:border-portal-500 transition text-gray-800">
+          <p class="text-xs text-gray-400 mt-1">Je email wordt gebruikt als je je code kwijtraakt</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-bold text-gray-700 mb-1.5">Geslacht</label>
+            <select id="reg-gender"
+              class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-portal-500 focus:border-portal-500 transition text-gray-800 bg-white">
+              <option value="">Selecteer...</option>
+              <option value="male">Man</option>
+              <option value="female">Vrouw</option>
+              <option value="other">Anders</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-bold text-gray-700 mb-1.5">Geboortedatum</label>
+            <input type="date" id="reg-dob"
+              class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-portal-500 focus:border-portal-500 transition text-gray-800">
+          </div>
+        </div>
+
+        <div class="bg-gray-50 rounded-xl p-4 border">
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" id="reg-consent" required class="mt-1 w-4 h-4 rounded border-gray-300 text-portal-600 focus:ring-portal-500">
+            <span class="text-sm text-gray-600">Ik ga akkoord met de verwerking van mijn gegevens ten behoeve van de gezondheidsanalyse. Mijn data wordt veilig opgeslagen en niet gedeeld met derden. <a href="#" class="text-portal-600 underline">Privacybeleid</a></span>
+          </label>
+        </div>
+
+        <button type="submit" id="reg-btn" class="w-full bg-portal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition shadow-lg shadow-portal-200">
+          <i class="fas fa-arrow-right mr-2"></i>Aanmelden & code ontvangen
+        </button>
+      </form>
+
+      <div class="mt-6 pt-6 border-t text-center">
+        <p class="text-sm text-gray-400">Al aangemeld?</p>
+        <a href="/inloggen" class="text-sm text-portal-600 font-semibold hover:text-portal-700 mt-1 inline-block"><i class="fas fa-sign-in-alt mr-1"></i>Inloggen met je code</a>
+      </div>
+    </div>
+
+    <!-- Succespagina (verborgen) -->
+    <div id="register-success" class="hidden fade-in">
+      <div class="bg-white rounded-2xl shadow-lg p-8 text-center">
+        <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+          <i class="fas fa-check-circle text-green-500 text-4xl"></i>
+        </div>
+        <h2 class="text-2xl font-black text-gray-800 mb-2">Welkom, <span id="success-name"></span>!</h2>
+        <p id="success-message" class="text-gray-500 mb-6"></p>
+        
+        <div class="bg-portal-50 border-2 border-portal-200 rounded-2xl p-6 mb-6">
+          <p class="text-sm font-semibold text-portal-700 mb-2">Jouw persoonlijke toegangscode:</p>
+          <div class="flex items-center justify-center gap-3">
+            <span id="success-code" class="text-4xl font-mono font-black tracking-[0.2em] text-portal-700"></span>
+            <button onclick="copyCode()" class="text-portal-500 hover:text-portal-700 transition" title="Kopieer code">
+              <i class="fas fa-copy text-xl"></i>
+            </button>
+          </div>
+          <p class="text-xs text-portal-600 mt-3"><i class="fas fa-info-circle mr-1"></i>Bewaar deze code goed — je hebt hem nodig om in te loggen</p>
+        </div>
+
+        <a href="/inloggen" class="inline-block bg-portal-600 text-white px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition shadow-lg">
+          <i class="fas fa-arrow-right mr-2"></i>Direct inloggen & starten
+        </a>
+
+        <div class="mt-6 pt-6 border-t">
+          <p class="text-xs text-gray-400"><i class="fas fa-shield-alt mr-1"></i>Je gegevens worden veilig opgeslagen en versleuteld verzonden (HTTPS)</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function copyCode() {
+      const code = document.getElementById('success-code').textContent;
+      navigator.clipboard.writeText(code);
+      const btn = event.currentTarget;
+      btn.innerHTML = '<i class="fas fa-check text-xl text-green-500"></i>';
+      setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy text-xl"></i>'; }, 2000);
+    }
+
+    document.getElementById('register-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('reg-btn');
+      const errDiv = document.getElementById('reg-error');
+      errDiv.classList.add('hidden');
+
+      // Validatie
+      const consent = document.getElementById('reg-consent').checked;
+      if (!consent) {
+        errDiv.textContent = 'Je moet akkoord gaan met de gegevensverwerking om door te gaan.';
+        errDiv.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Bezig met aanmelden...';
+
+      try {
+        const res = await fetch('/api/portal/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            first_name: document.getElementById('reg-first-name').value,
+            last_name: document.getElementById('reg-last-name').value,
+            email: document.getElementById('reg-email').value,
+            gender: document.getElementById('reg-gender').value || null,
+            date_of_birth: document.getElementById('reg-dob').value || null
+          })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          // Toon succespagina
+          document.getElementById('success-name').textContent = data.patient_name;
+          document.getElementById('success-code').textContent = data.code;
+          document.getElementById('success-message').textContent = data.message;
+          document.getElementById('register-form-container').classList.add('hidden');
+          document.getElementById('register-success').classList.remove('hidden');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          errDiv.textContent = data.error || 'Er ging iets mis. Probeer opnieuw.';
+          errDiv.classList.remove('hidden');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-arrow-right mr-2"></i>Aanmelden & code ontvangen';
+        }
+      } catch(err) {
+        errDiv.textContent = 'Verbindingsfout. Controleer je internetverbinding en probeer opnieuw.';
+        errDiv.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-arrow-right mr-2"></i>Aanmelden & code ontvangen';
+      }
+    });
+  </script>
 </body></html>`)
 })
 
@@ -3520,8 +3876,8 @@ app.get('/inloggen', (c) => {
       <div id="login-error" class="hidden mt-4 bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm"></div>
       
       <div class="mt-6 pt-6 border-t text-center">
-        <p class="text-sm text-gray-400">Geen toegangscode ontvangen?</p>
-        <p class="text-sm text-gray-500 mt-1">Neem contact op met de praktijk of vraag uw therapeut om een code.</p>
+        <p class="text-sm text-gray-400">Nog geen toegangscode?</p>
+        <a href="/aanmelden" class="text-sm text-portal-600 font-semibold hover:text-portal-700 mt-1 inline-block"><i class="fas fa-user-plus mr-1"></i>Gratis aanmelden</a>
       </div>
     </div>
   </main>
@@ -3594,7 +3950,7 @@ app.get('/menu', (c) => {
             <i class="fas fa-clipboard-check text-blue-600 text-2xl"></i>
           </div>
           <h3 class="text-xl font-bold text-gray-800 mb-2">Vragenlijst Invullen</h3>
-          <p class="text-gray-500 text-sm mb-4">Beantwoord 15 vragen over uw gezondheid, leefstijl en klachten. De resultaten worden automatisch geanalyseerd.</p>
+          <p class="text-gray-500 text-sm mb-4">Beantwoord 15 vragen over uw gezondheid, leefstijl en klachten. Uw therapeut beoordeelt uw antwoorden persoonlijk.</p>
           <span class="text-blue-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Start de vragenlijst</span>
         </a>
         
@@ -3784,7 +4140,7 @@ app.get('/vragenlijst', (c) => {
     async function submitPortalAssessment() {
       const btn = document.getElementById('btn-next');
       btn.disabled = true;
-      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Analyseren...';
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Versturen...';
       
       try {
         const res = await fetch('/api/portal/assessment', {
@@ -3813,62 +4169,66 @@ app.get('/vragenlijst', (c) => {
       const container = document.getElementById('results-container');
       container.classList.remove('hidden');
       
-      const riskColors = { high: 'from-red-500 to-red-700', medium: 'from-orange-400 to-orange-600', low: 'from-green-500 to-green-700' };
-      const riskLabels = { high: 'Hoog', medium: 'Gemiddeld', low: 'Laag' };
-      const riskText = { high: 'Er zijn meerdere risicofactoren gevonden. Uw therapeut zal dit uitgebreid met u bespreken.', medium: 'Er zijn enkele aandachtspunten gevonden. Uw therapeut bespreekt de vervolgstappen.', low: 'Uw profiel ziet er goed uit. Uw therapeut beoordeelt de details.' };
-      
       let html = '<div class="fade-in">';
       
       // Success header
-      html += '<div class="bg-gradient-to-r ' + (riskColors[result.overallRisk] || riskColors.low) + ' text-white p-8 rounded-2xl mb-6 text-center">';
+      html += '<div class="bg-gradient-to-r from-portal-500 to-teal-600 text-white p-8 rounded-2xl mb-6 text-center">';
       html += '<i class="fas fa-check-circle text-5xl mb-4 opacity-90"></i>';
-      html += '<h2 class="text-3xl font-black mb-2">Vragenlijst Verstuurd!</h2>';
-      html += '<p class="opacity-90 text-lg">Uw antwoorden zijn succesvol verwerkt en geanalyseerd.</p>';
+      html += '<h2 class="text-3xl font-black mb-2">Vragenlijst Ontvangen!</h2>';
+      html += '<p class="opacity-90 text-lg">Uw antwoorden worden beoordeeld door uw therapeut.</p>';
+      html += '</div>';
+
+      // Status info
+      html += '<div class="bg-amber-50 border-2 border-amber-200 rounded-2xl p-6 mb-6">';
+      html += '<div class="flex items-center gap-3 mb-3"><div class="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center"><i class="fas fa-hourglass-half text-amber-600"></i></div><h3 class="font-bold text-lg text-amber-800">In beoordeling</h3></div>';
+      html += '<p class="text-amber-700 text-sm">Uw therapeut analyseert uw antwoorden zorgvuldig. U ontvangt bericht zodra de beoordeling is afgerond en uw persoonlijke plan klaar is.</p>';
       html += '</div>';
       
-      // Risk overview
+      // Wat gebeurt er nu?
       html += '<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">';
-      html += '<h3 class="font-bold text-xl text-gray-800 mb-4"><i class="fas fa-chart-pie mr-2 text-portal-600"></i>Uw Resultaat Samenvatting</h3>';
-      html += '<div class="bg-gray-50 rounded-xl p-4 mb-4"><p class="text-sm text-gray-600"><strong>Algeheel risiconiveau:</strong> <span class="font-bold text-lg ml-2 ' + (result.overallRisk === 'high' ? 'text-red-600' : result.overallRisk === 'medium' ? 'text-orange-600' : 'text-green-600') + '">' + (riskLabels[result.overallRisk] || '-') + '</span></p>';
-      html += '<p class="text-sm text-gray-500 mt-2">' + (riskText[result.overallRisk] || '') + '</p></div>';
+      html += '<h3 class="font-bold text-xl text-gray-800 mb-4"><i class="fas fa-route mr-2 text-portal-600"></i>Wat gebeurt er nu?</h3>';
+      html += '<div class="space-y-4">';
+      html += '<div class="flex items-start gap-4"><div class="w-8 h-8 rounded-full bg-portal-100 flex items-center justify-center flex-shrink-0 mt-0.5"><span class="text-portal-700 font-bold text-sm">1</span></div><div><p class="font-semibold text-gray-800">Beoordeling door uw therapeut</p><p class="text-sm text-gray-500">Marc analyseert uw antwoorden en stelt een profiel op</p></div></div>';
+      html += '<div class="flex items-start gap-4"><div class="w-8 h-8 rounded-full bg-portal-100 flex items-center justify-center flex-shrink-0 mt-0.5"><span class="text-portal-700 font-bold text-sm">2</span></div><div><p class="font-semibold text-gray-800">Laboratoriumonderzoek</p><p class="text-sm text-gray-500">Op basis van uw profiel worden gerichte bloedwaarden en eventueel ontlastingstesten aanbevolen</p></div></div>';
+      html += '<div class="flex items-start gap-4"><div class="w-8 h-8 rounded-full bg-portal-100 flex items-center justify-center flex-shrink-0 mt-0.5"><span class="text-portal-700 font-bold text-sm">3</span></div><div><p class="font-semibold text-gray-800">Persoonlijk plan</p><p class="text-sm text-gray-500">U ontvangt een op maat gemaakt plan met voeding, supplementen en leefstijladvies</p></div></div>';
+      html += '</div></div>';
       
-      // Categories found
-      if (result.categories?.length) {
-        html += '<h4 class="font-bold text-gray-700 mb-3"><i class="fas fa-tags mr-1"></i>Gevonden categorieën:</h4><div class="flex flex-wrap gap-2 mb-4">';
-        const catColorsMap = { high: 'bg-red-100 text-red-700 border-red-300', medium: 'bg-orange-100 text-orange-700 border-orange-300', low: 'bg-green-100 text-green-700 border-green-300' };
-        result.categories.forEach(cat => {
-          html += '<span class="px-4 py-2 rounded-full text-sm font-bold border ' + (catColorsMap[cat.risk] || 'bg-gray-100') + '">' + cat.name + '</span>';
+      // Uw antwoorden overzicht
+      html += '<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">';
+      html += '<h3 class="font-bold text-xl text-gray-800 mb-4"><i class="fas fa-clipboard-list mr-2 text-portal-600"></i>Uw Antwoorden</h3>';
+      if (result.responses) {
+        const questionLabels = {
+          weight_history: "Hoe lang probeert u al af te vallen?",
+          diet_attempts: "Welke diëten heeft u al geprobeerd?",
+          weight_loss_difficulty: "Hoe moeilijk vindt u het om af te vallen?",
+          energy_level: "Hoe is uw energieniveau?",
+          sleep_quality: "Hoe is uw slaapkwaliteit?",
+          stress_level: "Hoe hoog is uw stressniveau?",
+          thyroid_symptoms: "Heeft u schildklier-gerelateerde klachten?",
+          hormone_symptoms: "Heeft u hormonale klachten?",
+          insulin_symptoms: "Heeft u symptomen van insulineresistentie?",
+          medication_use: "Welke medicatie gebruikt u?",
+          digestive_issues: "Heeft u spijsverteringsklachten?",
+          exercise_frequency: "Hoe vaak beweegt u?",
+          eating_pattern: "Hoe is uw eetpatroon?",
+          medical_conditions: "Welke medische aandoeningen heeft u?",
+          motivation: "Wat is uw motivatie?"
+        };
+        html += '<div class="space-y-3">';
+        Object.entries(result.responses).forEach(function(entry) {
+          var key = entry[0], value = entry[1];
+          var label = questionLabels[key] || key;
+          var displayVal = Array.isArray(value) ? value.join(", ") : (value || "-");
+          html += '<div class="border-b border-gray-100 pb-3"><p class="text-sm font-semibold text-gray-600">' + label + '</p><p class="text-gray-800 mt-0.5">' + displayVal + '</p></div>';
         });
         html += '</div>';
       }
-      
-      // What happens next
-      html += '<div class="bg-blue-50 border border-blue-200 rounded-xl p-4">';
-      html += '<h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-forward mr-1"></i>Wat gebeurt er nu?</h4>';
-      html += '<ul class="space-y-2 text-sm text-blue-700">';
-      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Uw therapeut Marc ontvangt en beoordeelt uw antwoorden</span></li>';
-      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Op basis hiervan worden gerichte laboratoriumtesten aanbevolen</span></li>';
-      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Na de labresultaten krijgt u een persoonlijk behandelplan</span></li>';
-      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Dit plan bevat voedingsadvies, supplementen en leefstijltips</span></li>';
-      html += '</ul></div>';
       html += '</div>';
-      
-      // Recommendations (if any)
-      if (result.recommendations?.length) {
-        html += '<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">';
-        html += '<h3 class="font-bold text-xl text-gray-800 mb-4"><i class="fas fa-lightbulb mr-2 text-amber-500"></i>Voorlopige Aanbevelingen</h3>';
-        html += '<div class="space-y-2">';
-        result.recommendations.forEach((rec, i) => {
-          html += '<div class="flex items-start gap-3 bg-amber-50 p-3 rounded-lg"><span class="font-bold text-amber-600 min-w-[24px]">' + (i+1) + '.</span><span class="text-sm text-amber-800">' + rec + '</span></div>';
-        });
-        html += '</div></div>';
-      }
       
       // Actions
       html += '<div class="flex flex-col sm:flex-row gap-4">';
       html += '<a href="/menu" class="bg-portal-600 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-portal-700 transition"><i class="fas fa-home mr-2"></i>Terug naar Menu</a>';
       html += '<a href="/lab-upload" class="bg-amber-500 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-amber-600 transition"><i class="fas fa-file-upload mr-2"></i>Lab-formulier Uploaden</a>';
-      html += '<button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-xl font-medium hover:bg-gray-50 transition"><i class="fas fa-print mr-2"></i>Print</button>';
       html += '</div>';
       
       html += '</div>';
