@@ -81,6 +81,21 @@ app.delete('/api/patients/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// Hard delete: permanently remove patient and all related data
+app.delete('/api/patients/:id/permanent', async (c) => {
+  const db = getSupabase(c.env)
+  const id = c.req.param('id')
+  // Delete in order: children first (FK constraints)
+  await db.from('follow_ups').delete().eq('patient_id', id)
+  await db.from('progress_tracking').delete().eq('patient_id', id)
+  await db.from('supplement_protocols').delete().eq('patient_id', id)
+  await db.from('lab_tests').delete().eq('patient_id', id)
+  await db.from('assessments').delete().eq('patient_id', id)
+  const { error } = await db.from('patients').delete().eq('id', id)
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ success: true })
+})
+
 // =====================================================
 // API: ASSESSMENTS
 // =====================================================
@@ -501,7 +516,7 @@ app.get('/', (c) => {
             const cats = lastAssessment?.categories || [];
             const catTags = cats.map(cat => '<span class="inline-block px-2 py-1 rounded-full text-xs font-semibold ' + (categoryColors[cat.id]||'bg-gray-100 text-gray-700') + '">' + (categoryNames[cat.id]||cat.name) + '</span>').join(' ');
             const statusBadge = lastAssessment ? '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">Assessment voltooid</span>' : '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">Nieuw</span>';
-            return '<tr class="border-b hover:bg-gray-50"><td class="py-3 font-semibold">' + p.first_name + ' ' + p.last_name + '</td><td class="py-3">' + age + '</td><td class="py-3"><div class="flex flex-wrap gap-1">' + (catTags||'-') + '</div></td><td class="py-3">' + statusBadge + '</td><td class="py-3"><a href="/patient/' + p.id + '" class="text-primary-600 hover:text-primary-800 font-semibold text-sm mr-3"><i class="fas fa-eye mr-1"></i>Bekijk</a>' + (!lastAssessment ? '<a href="/triage/' + p.id + '" class="text-green-600 hover:text-green-800 font-semibold text-sm"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>' : '') + '</td></tr>';
+            return '<tr class="border-b hover:bg-gray-50"><td class="py-3 font-semibold">' + p.first_name + ' ' + p.last_name + '</td><td class="py-3">' + age + '</td><td class="py-3"><div class="flex flex-wrap gap-1">' + (catTags||'-') + '</div></td><td class="py-3">' + statusBadge + '</td><td class="py-3"><a href="/patient/' + p.id + '" class="text-primary-600 hover:text-primary-800 font-semibold text-sm mr-3"><i class="fas fa-eye mr-1"></i>Bekijk</a>' + (!lastAssessment ? '<a href="/triage/' + p.id + '" class="text-green-600 hover:text-green-800 font-semibold text-sm mr-3"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>' : '') + '<button onclick="deletePatient(\\'' + p.id + '\\',\\'' + p.first_name + ' ' + p.last_name + '\\')" class="text-red-400 hover:text-red-600 text-sm" title="Verwijder patiënt"><i class="fas fa-trash-alt"></i></button></td></tr>';
           }).join('') + '</tbody></table>';
       } catch(e) {
         console.error(e);
@@ -509,6 +524,15 @@ app.get('/', (c) => {
       }
     }
     loadDashboard();
+
+    async function deletePatient(id, name) {
+      if (!confirm('Weet je zeker dat je "' + name + '" definitief wilt verwijderen?\\n\\nAlle bijbehorende data (assessments, lab-testen, protocollen, progressie) wordt ook verwijderd.\\n\\nDit kan NIET ongedaan worden gemaakt!')) return;
+      try {
+        const res = await fetch('/api/patients/' + id + '/permanent', { method: 'DELETE' });
+        if (res.ok) { loadDashboard(); }
+        else { const err = await res.json(); alert('Fout: ' + (err.error || 'Onbekend')); }
+      } catch(e) { alert('Fout: ' + e.message); }
+    }
   </script>
 </body>
 </html>`)
@@ -1042,7 +1066,7 @@ app.get('/patient/:id', (c) => {
 
         let html = '';
         // Header
-        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold">'+p.first_name+' '+p.last_name+'</h2><p class="opacity-90">'+age+' jaar | '+genderLabel+' | '+( p.email||'Geen email')+'</p></div><div class="flex gap-2">'+(lastAssessment?'':'<a href="/triage/'+p.id+'" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>')+'</div></div></div><div class="p-6"><div class="flex flex-wrap gap-2">'+( catTags||'<span class="text-gray-400">Nog geen assessment</span>')+'</div></div></div>';
+        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold">'+p.first_name+' '+p.last_name+'</h2><p class="opacity-90">'+age+' jaar | '+genderLabel+' | '+( p.email||'Geen email')+'</p></div><div class="flex gap-2 flex-wrap">'+(lastAssessment?'':'<a href="/triage/'+p.id+'" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>')+'<button onclick="generatePortalCode()" class="bg-green-500/30 hover:bg-green-500/50 text-white px-3 py-2 rounded-lg text-sm font-semibold border border-green-300/30"><i class="fas fa-key mr-1"></i>Portaal Code</button><button onclick="deletePatientPermanent()" class="bg-red-500/20 hover:bg-red-500/40 text-white px-3 py-2 rounded-lg text-sm font-semibold border border-red-300/30"><i class="fas fa-trash-alt mr-1"></i>Verwijder</button></div></div></div><div class="p-6"><div class="flex flex-wrap gap-2 items-center">'+( catTags||'<span class="text-gray-400">Nog geen assessment</span>')+'<span id="portal-code-badge" class="hidden ml-2 px-3 py-1 rounded-full text-sm font-mono font-bold bg-green-100 text-green-700 border border-green-300"><i class="fas fa-key mr-1"></i><span id="portal-code-value"></span></span></div></div></div>';
 
         // Assessment Historie
         const assessments = (p.assessments||[]).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
@@ -1471,7 +1495,71 @@ app.get('/patient/:id', (c) => {
       else alert('Fout bij protocol generatie');
     }
 
+    async function deletePatientPermanent() {
+      const name = patientData ? patientData.first_name + ' ' + patientData.last_name : '';
+      if (!confirm('Weet je zeker dat je "' + name + '" definitief wilt verwijderen?\\n\\nAlle bijbehorende data (assessments, lab-testen, protocollen, progressie) wordt ook verwijderd.\\n\\nDit kan NIET ongedaan worden gemaakt!')) return;
+      try {
+        const res = await fetch('/api/patients/' + patientId + '/permanent', { method: 'DELETE' });
+        if (res.ok) { window.location.href = '/'; }
+        else { const err = await res.json(); alert('Fout: ' + (err.error || 'Onbekend')); }
+      } catch(e) { alert('Fout: ' + e.message); }
+    }
+
+    async function generatePortalCode() {
+      const name = patientData ? patientData.first_name + ' ' + patientData.last_name : '';
+      // Check if code already exists
+      try {
+        const checkRes = await fetch('/api/patients/' + patientId + '/portal-code');
+        const checkData = await checkRes.json();
+        if (checkData.portal_code) {
+          const action = confirm('Er is al een actieve portaalcode voor ' + name + ':\\n\\n' + checkData.portal_code + '\\n\\nWilt u een NIEUWE code genereren? (de oude code werkt dan niet meer)');
+          if (!action) {
+            // Just show existing code
+            document.getElementById('portal-code-badge').classList.remove('hidden');
+            document.getElementById('portal-code-value').textContent = checkData.portal_code;
+            return;
+          }
+        }
+      } catch(e) {}
+      
+      try {
+        const res = await fetch('/api/portal/generate-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ patient_id: patientId })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          document.getElementById('portal-code-badge').classList.remove('hidden');
+          document.getElementById('portal-code-value').textContent = data.code;
+          alert('Portaalcode gegenereerd voor ' + name + ':\\n\\n' + data.code + '\\n\\nDe patiënt kan hiermee inloggen op:\\n' + window.location.origin + '/portaal');
+        } else {
+          alert('Fout: ' + (data.error || 'Onbekend'));
+        }
+      } catch(e) { alert('Fout: ' + e.message); }
+    }
+
+    // Check for existing portal code on load
+    async function checkPortalCode() {
+      try {
+        const res = await fetch('/api/patients/' + patientId + '/portal-code');
+        const data = await res.json();
+        if (data.portal_code) {
+          document.getElementById('portal-code-badge').classList.remove('hidden');
+          document.getElementById('portal-code-value').textContent = data.portal_code;
+        }
+      } catch(e) {}
+    }
+      if (!confirm('Weet je zeker dat je "' + name + '" definitief wilt verwijderen?\\n\\nAlle bijbehorende data (assessments, lab-testen, protocollen, progressie) wordt ook verwijderd.\\n\\nDit kan NIET ongedaan worden gemaakt!')) return;
+      try {
+        const res = await fetch('/api/patients/' + patientId + '/permanent', { method: 'DELETE' });
+        if (res.ok) { window.location.href = '/'; }
+        else { const err = await res.json(); alert('Fout: ' + (err.error || 'Onbekend')); }
+      } catch(e) { alert('Fout: ' + e.message); }
+    }
+
     loadProfile();
+    checkPortalCode();
   </script>
 </body></html>`)
 })
@@ -1871,6 +1959,1039 @@ app.get('/protocol/:patientId/:protocolId', (c) => {
     loadProtocol();
   </script>
 </body></html>`)
+})
+
+// =====================================================
+// PATIËNTENPORTAAL - APART GEDEELTE
+// =====================================================
+
+// Portal HTML head (eigen branding, geen therapeut-navigatie)
+const portalHead = `<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gewichtsanalyse Portaal - Marc's Praktijk</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            portal: { 50:'#f0fdf4',100:'#dcfce7',200:'#bbf7d0',300:'#86efac',400:'#4ade80',500:'#22c55e',600:'#16a34a',700:'#15803d',800:'#166534',900:'#14532d' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .fade-in { animation: fadeIn 0.4s ease-out; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(15px); } to { opacity:1; transform:translateY(0); } }
+    .card-hover { transition: all 0.3s; }
+    .card-hover:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.12); }
+    .progress-bar { transition: width 0.5s ease; }
+    .pulse { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.6; } }
+  </style>
+</head>`
+
+const portalNav = `
+<nav class="bg-gradient-to-r from-portal-700 to-portal-900 text-white shadow-lg">
+  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+    <a href="/portaal" class="flex items-center gap-3 hover:opacity-90">
+      <i class="fas fa-leaf text-2xl"></i>
+      <div>
+        <h1 class="text-lg font-bold leading-tight">Gewichtsanalyse Portaal</h1>
+        <p class="text-xs opacity-75">Fysiopraktijk Zeist - Marc's Praktijk</p>
+      </div>
+    </a>
+    <div class="flex items-center gap-3">
+      <a href="/portaal" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-home mr-1"></i> Home</a>
+      <a href="/portaal/inloggen" class="bg-white text-portal-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-portal-50"><i class="fas fa-sign-in-alt mr-1"></i> Inloggen</a>
+    </div>
+  </div>
+</nav>`
+
+// =====================================================
+// API: PORTAL ACCESS CODES
+// =====================================================
+app.post('/api/portal/generate-code', async (c) => {
+  const db = getSupabase(c.env)
+  const { patient_id } = await c.req.json()
+  
+  // Generate 8-character alphanumeric code
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no confusing chars I/O/0/1
+  let code = ''
+  for (let i = 0; i < 8; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  
+  // Try to store in portal_code column; if column doesn't exist, use notes field
+  const { data, error } = await db
+    .from('patients')
+    .update({ portal_code: code, portal_code_created_at: new Date().toISOString() })
+    .eq('id', patient_id)
+    .select()
+    .single()
+  
+  if (error && error.message?.includes('portal_code')) {
+    // Column doesn't exist yet - store in notes as fallback  
+    const { data: d2, error: e2 } = await db
+      .from('patients')
+      .update({ notes: 'PORTAL_CODE:' + code })
+      .eq('id', patient_id)
+      .select()
+      .single()
+    if (e2) return c.json({ error: e2.message }, 500)
+    return c.json({ code, patient_id })
+  }
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ code, patient_id })
+})
+
+app.post('/api/portal/verify-code', async (c) => {
+  const db = getSupabase(c.env)
+  const { code } = await c.req.json()
+  const upperCode = code.toUpperCase().trim()
+  
+  // Try portal_code column first
+  let { data, error } = await db
+    .from('patients')
+    .select('id, first_name, last_name, gender, date_of_birth, portal_code')
+    .eq('portal_code', upperCode)
+    .eq('status', 'active')
+    .single()
+  
+  if (error || !data) {
+    // Fallback: check notes field for PORTAL_CODE:XXXXXXXX
+    const { data: allPatients } = await db
+      .from('patients')
+      .select('id, first_name, last_name, gender, date_of_birth, notes')
+      .eq('status', 'active')
+    
+    const found = allPatients?.find(p => p.notes?.includes('PORTAL_CODE:' + upperCode))
+    if (!found) return c.json({ error: 'Ongeldige toegangscode' }, 401)
+    data = found
+  }
+  
+  return c.json({
+    patient_id: data.id,
+    first_name: data.first_name,
+    last_name: data.last_name,
+    gender: data.gender,
+    date_of_birth: data.date_of_birth
+  })
+})
+
+// Portal assessment submission (from patient side)
+app.post('/api/portal/assessment', async (c) => {
+  const db = getSupabase(c.env)
+  const body = await c.req.json()
+  const upperCode = body.portal_code?.toUpperCase()?.trim()
+  
+  // Verify portal code (try column, then notes fallback)
+  let patient: any = null
+  const { data: p1 } = await db
+    .from('patients')
+    .select('id, portal_code')
+    .eq('portal_code', upperCode)
+    .eq('status', 'active')
+    .single()
+  
+  if (p1) {
+    patient = p1
+  } else {
+    const { data: allP } = await db.from('patients').select('id, notes').eq('status', 'active')
+    const found = allP?.find(p => p.notes?.includes('PORTAL_CODE:' + upperCode))
+    if (found) patient = found
+  }
+  
+  if (!patient) return c.json({ error: 'Ongeldige toegangscode' }, 401)
+  
+  // Run classification
+  const classification = classifyPatient(body.responses as TriageResponses)
+  const riskProfile = generateRiskProfile(
+    classification.categories,
+    classification.riskScores,
+    body.responses
+  )
+  
+  const assessmentData = {
+    patient_id: patient.id,
+    assessment_type: 'portal_self',
+    determined_type: classification.primaryType,
+    categories: classification.categories,
+    risk_scores: classification.riskScores,
+    responses: body.responses,
+    risk_profile: riskProfile,
+    completed: true
+  }
+  
+  const { data, error } = await db
+    .from('assessments')
+    .insert([assessmentData])
+    .select()
+    .single()
+  
+  if (error) return c.json({ error: error.message }, 500)
+  
+  // Update patient type
+  await db
+    .from('patients')
+    .update({ patient_type: classification.primaryType.charAt(0).toUpperCase() })
+    .eq('id', patient.id)
+  
+  // Generate lab recommendations
+  const categoryIds = classification.categories.map(cat => cat.id)
+  const labPackage = getLabRecommendations(categoryIds, body.responses)
+  
+  await db
+    .from('lab_tests')
+    .insert([{
+      patient_id: patient.id,
+      assessment_id: data.id,
+      test_package: labPackage.name,
+      recommended_tests: labPackage.tests,
+      blood_tests: labPackage.bloodTests,
+      stool_tests: labPackage.stoolTests,
+      other_tests: labPackage.otherTests,
+      urgency: labPackage.urgency,
+      rationale: labPackage.rationale,
+      status: 'recommended'
+    }])
+  
+  return c.json({
+    success: true,
+    assessment_id: data.id,
+    categories: classification.categories.map(c => ({ name: c.name, risk: c.risk })),
+    primaryType: classification.primaryType,
+    overallRisk: riskProfile.overallRisk,
+    recommendations: riskProfile.recommendations || []
+  }, 201)
+})
+
+// Portal lab document upload (store as base64 in Supabase since no R2/Storage)
+app.post('/api/portal/lab-upload', async (c) => {
+  const db = getSupabase(c.env)
+  const body = await c.req.json()
+  const upperCode = body.portal_code?.toUpperCase()?.trim()
+  
+  // Verify portal code (try column, then notes fallback)
+  let patient: any = null
+  const { data: p1 } = await db
+    .from('patients')
+    .select('id, portal_code')
+    .eq('portal_code', upperCode)
+    .eq('status', 'active')
+    .single()
+  
+  if (p1) {
+    patient = p1
+  } else {
+    const { data: allP } = await db.from('patients').select('id, notes').eq('status', 'active')
+    const found = allP?.find(p => p.notes?.includes('PORTAL_CODE:' + upperCode))
+    if (found) patient = found
+  }
+  
+  if (!patient) return c.json({ error: 'Ongeldige toegangscode' }, 401)
+  
+  // Store the upload reference in progress_tracking or a notes field
+  const { data, error } = await db
+    .from('progress_tracking')
+    .insert([{
+      patient_id: patient.id,
+      measurement_date: new Date().toISOString().split('T')[0],
+      notes: `📎 Lab-document geüpload via portaal: ${body.file_name || 'onbekend'} (${body.file_type || 'onbekend'}) - ${new Date().toLocaleString('nl-NL')}`
+    }])
+    .select()
+    .single()
+  
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ success: true, message: 'Document ontvangen. Uw therapeut wordt geïnformeerd.' })
+})
+
+// =====================================================
+// PORTAL FRONTEND PAGES
+// =====================================================
+
+// LANDINGSPAGINA
+app.get('/portaal', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+
+  <!-- Hero Section -->
+  <section class="bg-gradient-to-br from-portal-600 via-portal-700 to-teal-800 text-white py-16 md:py-24">
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
+        <div class="fade-in">
+          <div class="inline-flex items-center gap-2 bg-white/15 px-4 py-2 rounded-full text-sm mb-6">
+            <i class="fas fa-shield-alt"></i>
+            <span>Veilig & Vertrouwelijk</span>
+          </div>
+          <h1 class="text-4xl md:text-5xl font-black leading-tight mb-6">
+            Ontdek waarom afvallen<br>
+            <span class="text-portal-200">niet altijd lukt</span>
+          </h1>
+          <p class="text-lg opacity-90 mb-8 leading-relaxed">
+            Vul onze wetenschappelijk onderbouwde vragenlijst in en ontdek welk type gewichtsprobleem 
+            bij u past. Uw therapeut Marc gebruikt deze informatie om een persoonlijk plan op te stellen.
+          </p>
+          <div class="flex flex-col sm:flex-row gap-4">
+            <a href="/portaal/inloggen" class="bg-white text-portal-700 px-8 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition text-center shadow-lg">
+              <i class="fas fa-clipboard-check mr-2"></i>Start Vragenlijst
+            </a>
+            <a href="#hoe-werkt-het" class="border-2 border-white/30 px-8 py-4 rounded-xl font-semibold text-lg hover:bg-white/10 transition text-center">
+              <i class="fas fa-info-circle mr-2"></i>Meer informatie
+            </a>
+          </div>
+        </div>
+        <div class="hidden md:flex justify-center">
+          <div class="bg-white/10 backdrop-blur rounded-2xl p-8 space-y-4 max-w-xs">
+            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-clipboard-list"></i></div><div><p class="font-bold">15 vragen</p><p class="text-sm opacity-75">~5-10 minuten</p></div></div>
+            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-brain"></i></div><div><p class="font-bold">7 categorieën</p><p class="text-sm opacity-75">Automatische analyse</p></div></div>
+            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-flask"></i></div><div><p class="font-bold">Lab-advies</p><p class="text-sm opacity-75">Op maat voor u</p></div></div>
+            <div class="flex items-center gap-3"><div class="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center"><i class="fas fa-heart"></i></div><div><p class="font-bold">Persoonlijk plan</p><p class="text-sm opacity-75">Voeding + supplementen</p></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Hoe werkt het -->
+  <section id="hoe-werkt-het" class="py-16 bg-white">
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl font-black text-gray-800 mb-4">Hoe werkt het?</h2>
+        <p class="text-gray-500 max-w-2xl mx-auto">In vier eenvoudige stappen naar inzicht in uw gewichtsprobleem en een persoonlijk behandelplan.</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
+          <div class="w-16 h-16 bg-portal-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl font-black text-portal-600">1</span>
+          </div>
+          <h3 class="font-bold text-gray-800 mb-2">Toegangscode ontvangen</h3>
+          <p class="text-sm text-gray-500">Uw therapeut geeft u een persoonlijke toegangscode waarmee u kunt inloggen.</p>
+        </div>
+        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
+          <div class="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl font-black text-blue-600">2</span>
+          </div>
+          <h3 class="font-bold text-gray-800 mb-2">Vragenlijst invullen</h3>
+          <p class="text-sm text-gray-500">Beantwoord 15 vragen over uw gezondheid, leefstijl en klachten. Duurt 5-10 minuten.</p>
+        </div>
+        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
+          <div class="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl font-black text-purple-600">3</span>
+          </div>
+          <h3 class="font-bold text-gray-800 mb-2">Automatische analyse</h3>
+          <p class="text-sm text-gray-500">Ons systeem analyseert uw antwoorden en identificeert mogelijke oorzaken van gewichtsproblemen.</p>
+        </div>
+        <div class="text-center card-hover bg-gray-50 p-6 rounded-2xl">
+          <div class="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl font-black text-amber-600">4</span>
+          </div>
+          <h3 class="font-bold text-gray-800 mb-2">Persoonlijk plan</h3>
+          <p class="text-sm text-gray-500">Uw therapeut bespreekt de resultaten en stelt een behandelplan samen met voeding, supplementen en leefstijladvies.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Voordelen -->
+  <section class="py-16 bg-gray-50">
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl font-black text-gray-800 mb-4">Waarom deze aanpak?</h2>
+        <p class="text-gray-500 max-w-2xl mx-auto">Afvallen is méér dan calorieën tellen. Wij kijken naar de onderliggende oorzaken.</p>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
+          <div class="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-fire text-red-600 text-xl"></i></div>
+          <h3 class="font-bold text-gray-800 mb-2">Metabole Weerstand</h3>
+          <p class="text-sm text-gray-500">Sommige lichamen zijn metabolisch "vastgelopen". Wij identificeren of uw stofwisseling geblokkeerd is en waarom.</p>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
+          <div class="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-shield-virus text-indigo-600 text-xl"></i></div>
+          <h3 class="font-bold text-gray-800 mb-2">Schildklier & Hormonen</h3>
+          <p class="text-sm text-gray-500">Schildklierproblemen, PCOS, en hormonale disbalans worden vaak gemist bij standaard diëten. Wij testen gericht.</p>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
+          <div class="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-brain text-orange-600 text-xl"></i></div>
+          <h3 class="font-bold text-gray-800 mb-2">Cortisol & Stress</h3>
+          <p class="text-sm text-gray-500">Chronische stress verhoogt cortisol en blokkeert vetverbranding. Wij brengen dit in kaart met gerichte bloedtesten.</p>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
+          <div class="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-chart-line text-yellow-600 text-xl"></i></div>
+          <h3 class="font-bold text-gray-800 mb-2">Insuline Resistentie</h3>
+          <p class="text-sm text-gray-500">Hoge insulinespiegels maken afvallen bijna onmogelijk. Wij meten dit nauwkeurig met HOMA-IR berekening.</p>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
+          <div class="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-pills text-green-600 text-xl"></i></div>
+          <h3 class="font-bold text-gray-800 mb-2">Orthomoleculaire Aanpak</h3>
+          <p class="text-sm text-gray-500">Op basis van uw bloedwaarden stellen wij een gericht supplementenprotocol samen om tekorten aan te vullen.</p>
+        </div>
+        <div class="bg-white p-6 rounded-2xl shadow-sm card-hover border border-gray-100">
+          <div class="w-12 h-12 bg-teal-100 rounded-xl flex items-center justify-center mb-4"><i class="fas fa-dna text-teal-600 text-xl"></i></div>
+          <h3 class="font-bold text-gray-800 mb-2">Darmgezondheid</h3>
+          <p class="text-sm text-gray-500">Ontlastingsonderzoek (calprotectine, zonuline, elastase) geeft inzicht in darmpermeabiliteit en ontstekingen.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 Categorieën -->
+  <section class="py-16 bg-white">
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="text-center mb-12">
+        <h2 class="text-3xl font-black text-gray-800 mb-4">7 gewichtscategorieën die wij onderzoeken</h2>
+        <p class="text-gray-500 max-w-2xl mx-auto">Onze vragenlijst screent op elk van deze categorieën om de juiste aanpak te bepalen.</p>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-center"><i class="fas fa-bolt text-red-500 text-2xl mb-2"></i><p class="font-bold text-sm text-red-700">Metabole Weerstand</p></div>
+        <div class="bg-indigo-50 border border-indigo-200 rounded-xl p-4 text-center"><i class="fas fa-shield-virus text-indigo-500 text-2xl mb-2"></i><p class="font-bold text-sm text-indigo-700">Schildklier-gedreven</p></div>
+        <div class="bg-pink-50 border border-pink-200 rounded-xl p-4 text-center"><i class="fas fa-venus text-pink-500 text-2xl mb-2"></i><p class="font-bold text-sm text-pink-700">PCOS / Hormonen</p></div>
+        <div class="bg-orange-50 border border-orange-200 rounded-xl p-4 text-center"><i class="fas fa-brain text-orange-500 text-2xl mb-2"></i><p class="font-bold text-sm text-orange-700">Cortisol-gedreven</p></div>
+        <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-center"><i class="fas fa-candy-cane text-red-500 text-2xl mb-2"></i><p class="font-bold text-sm text-red-700">Insuline-gedreven</p></div>
+        <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center"><i class="fas fa-pills text-blue-500 text-2xl mb-2"></i><p class="font-bold text-sm text-blue-700">Medicatie-gerelateerd</p></div>
+        <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-center"><i class="fas fa-heart text-green-500 text-2xl mb-2"></i><p class="font-bold text-sm text-green-700">Standaard Leefstijl</p></div>
+        <div class="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center flex flex-col items-center justify-center"><i class="fas fa-question-circle text-gray-400 text-2xl mb-2"></i><p class="font-bold text-sm text-gray-600">Welke bent u?</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Disclaimer -->
+  <section id="disclaimer" class="py-16 bg-gray-50">
+    <div class="max-w-3xl mx-auto px-4">
+      <div class="bg-white rounded-2xl shadow-sm border p-8">
+        <div class="flex items-center gap-3 mb-6">
+          <div class="w-12 h-12 bg-yellow-100 rounded-xl flex items-center justify-center"><i class="fas fa-exclamation-triangle text-yellow-600 text-xl"></i></div>
+          <h2 class="text-2xl font-black text-gray-800">Disclaimer</h2>
+        </div>
+        <div class="space-y-4 text-gray-600 text-sm leading-relaxed">
+          <p><strong>Medische informatie:</strong> De informatie op dit portaal en de resultaten van de vragenlijst zijn bedoeld als hulpmiddel voor uw therapeut en zijn <strong>geen medisch advies of diagnose</strong>. De resultaten vervangen niet het oordeel van een arts of specialist.</p>
+          <p><strong>Professionele begeleiding:</strong> De analyse wordt altijd door uw therapeut Marc beoordeeld en besproken. Wijzigingen in medicatie, supplementen of voeding dienen altijd in overleg met uw behandelend arts plaats te vinden.</p>
+          <p><strong>Geen vervanging:</strong> Dit portaal vervangt geen consult bij uw huisarts, specialist of andere zorgverlener. Bij acute klachten neem altijd contact op met uw huisarts of bel 112.</p>
+          <p><strong>Gegevensbescherming:</strong> Uw antwoorden worden veilig opgeslagen en zijn uitsluitend toegankelijk voor u en uw therapeut. Wij verwerken uw gegevens conform de AVG (Algemene Verordening Gegevensbescherming). Uw gegevens worden niet gedeeld met derden.</p>
+          <p><strong>Wetenschappelijke basis:</strong> De vragenlijst en categorisatie zijn gebaseerd op orthomoleculaire en functionele geneeskunde principes. De lab-referentiewaarden zijn <em>optimale</em> ranges (niet standaard lab-ranges) en worden gebruikt voor preventieve gezondheidsoptimalisatie.</p>
+          <p><strong>Supplementen:</strong> Aanbevolen supplementen zijn orthomoleculaire adviezen en geen geneesmiddelen. Raadpleeg bij twijfel altijd uw arts, met name bij zwangerschap, borstvoeding, of gebruik van medicijnen.</p>
+        </div>
+        <div class="mt-6 pt-4 border-t">
+          <p class="text-xs text-gray-400"><i class="fas fa-user-md mr-1"></i> Marc - Fysiotherapeut & Orthomoleculair Therapeut | Fysiopraktijk Zeist</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="py-12 bg-gradient-to-r from-portal-600 to-teal-700 text-white">
+    <div class="max-w-3xl mx-auto px-4 text-center">
+      <h2 class="text-3xl font-black mb-4">Klaar om te beginnen?</h2>
+      <p class="opacity-90 mb-8">Heeft u een toegangscode ontvangen? Log in en vul de vragenlijst in.</p>
+      <a href="/portaal/inloggen" class="bg-white text-portal-700 px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition shadow-lg inline-block">
+        <i class="fas fa-sign-in-alt mr-2"></i>Inloggen met Toegangscode
+      </a>
+      <p class="text-sm opacity-75 mt-4">Nog geen toegangscode? Neem contact op met de praktijk.</p>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="bg-gray-800 text-gray-400 py-8">
+    <div class="max-w-5xl mx-auto px-4 text-center">
+      <p class="text-sm">&copy; ${new Date().getFullYear()} Fysiopraktijk Zeist - Marc's Praktijk</p>
+      <p class="text-xs mt-2">Fysiotherapie & Orthomoleculaire Therapie | <a href="#disclaimer" class="underline hover:text-white">Disclaimer</a></p>
+    </div>
+  </footer>
+</body></html>`)
+})
+
+// INLOG PAGINA
+app.get('/portaal/inloggen', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-md mx-auto px-4 py-16">
+    <div class="bg-white rounded-2xl shadow-lg p-8 fade-in">
+      <div class="text-center mb-8">
+        <div class="w-20 h-20 bg-portal-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-key text-portal-600 text-3xl"></i>
+        </div>
+        <h2 class="text-2xl font-black text-gray-800">Inloggen</h2>
+        <p class="text-gray-500 mt-2">Voer uw persoonlijke toegangscode in die u van uw therapeut heeft ontvangen.</p>
+      </div>
+      
+      <form id="login-form" class="space-y-6">
+        <div>
+          <label class="block text-sm font-bold text-gray-700 mb-2">Toegangscode</label>
+          <input 
+            id="code-input"
+            type="text" 
+            maxlength="8" 
+            placeholder="Bijv. AB3CDE7F"
+            class="w-full border-2 border-gray-200 rounded-xl px-5 py-4 text-center text-2xl font-mono tracking-[0.3em] uppercase focus:ring-2 focus:ring-portal-500 focus:border-portal-500 transition"
+            autocomplete="off"
+            required
+          >
+          <p class="text-xs text-gray-400 mt-2 text-center">8 tekens - letters en cijfers</p>
+        </div>
+        <button type="submit" id="login-btn" class="w-full bg-portal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition">
+          <i class="fas fa-sign-in-alt mr-2"></i>Inloggen
+        </button>
+      </form>
+      
+      <div id="login-error" class="hidden mt-4 bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm"></div>
+      
+      <div class="mt-6 pt-6 border-t text-center">
+        <p class="text-sm text-gray-400">Geen toegangscode ontvangen?</p>
+        <p class="text-sm text-gray-500 mt-1">Neem contact op met de praktijk of vraag uw therapeut om een code.</p>
+      </div>
+    </div>
+  </main>
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const code = document.getElementById('code-input').value.trim();
+      const btn = document.getElementById('login-btn');
+      const errDiv = document.getElementById('login-error');
+      
+      if (code.length < 6) {
+        errDiv.textContent = 'Voer een geldige toegangscode in (minimaal 6 tekens).';
+        errDiv.classList.remove('hidden');
+        return;
+      }
+      
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Controleren...';
+      errDiv.classList.add('hidden');
+      
+      try {
+        const res = await fetch('/api/portal/verify-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+          // Store in sessionStorage
+          sessionStorage.setItem('portal_code', code.toUpperCase());
+          sessionStorage.setItem('portal_patient', JSON.stringify(data));
+          window.location.href = '/portaal/menu';
+        } else {
+          errDiv.textContent = data.error || 'Ongeldige toegangscode. Controleer de code en probeer opnieuw.';
+          errDiv.classList.remove('hidden');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-sign-in-alt mr-2"></i>Inloggen';
+        }
+      } catch(err) {
+        errDiv.textContent = 'Verbindingsfout. Probeer het later opnieuw.';
+        errDiv.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sign-in-alt mr-2"></i>Inloggen';
+      }
+    });
+  </script>
+</body></html>`)
+})
+
+// PORTAL MENU (na inloggen)
+app.get('/portaal/menu', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-3xl mx-auto px-4 py-12">
+    <div id="menu-container">
+      <div class="text-center mb-8 fade-in">
+        <div class="w-20 h-20 bg-portal-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-user-circle text-portal-600 text-3xl"></i>
+        </div>
+        <h2 class="text-2xl font-black text-gray-800">Welkom, <span id="patient-name">...</span></h2>
+        <p class="text-gray-500 mt-2">Kies wat u wilt doen:</p>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 fade-in">
+        <!-- Vragenlijst -->
+        <a href="/portaal/vragenlijst" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+          <div class="w-16 h-16 bg-blue-100 group-hover:bg-blue-200 rounded-2xl flex items-center justify-center mb-4 transition">
+            <i class="fas fa-clipboard-check text-blue-600 text-2xl"></i>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Vragenlijst Invullen</h3>
+          <p class="text-gray-500 text-sm mb-4">Beantwoord 15 vragen over uw gezondheid, leefstijl en klachten. De resultaten worden automatisch geanalyseerd.</p>
+          <span class="text-blue-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Start de vragenlijst</span>
+        </a>
+        
+        <!-- Lab Upload -->
+        <a href="/portaal/lab-upload" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+          <div class="w-16 h-16 bg-amber-100 group-hover:bg-amber-200 rounded-2xl flex items-center justify-center mb-4 transition">
+            <i class="fas fa-file-upload text-amber-600 text-2xl"></i>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Lab-formulier Uploaden</h3>
+          <p class="text-gray-500 text-sm mb-4">Upload een foto of scan van uw labresultaten. Uw therapeut verwerkt deze in uw dossier.</p>
+          <span class="text-amber-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Upload document</span>
+        </a>
+        
+        <!-- Disclaimer -->
+        <a href="/portaal#disclaimer" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+          <div class="w-16 h-16 bg-yellow-100 group-hover:bg-yellow-200 rounded-2xl flex items-center justify-center mb-4 transition">
+            <i class="fas fa-exclamation-triangle text-yellow-600 text-2xl"></i>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Disclaimer & Informatie</h3>
+          <p class="text-gray-500 text-sm mb-4">Lees de belangrijke informatie over het gebruik van dit portaal en de medische disclaimer.</p>
+          <span class="text-yellow-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Lees meer</span>
+        </a>
+        
+        <!-- Uitloggen -->
+        <button onclick="logout()" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group text-left w-full">
+          <div class="w-16 h-16 bg-gray-100 group-hover:bg-gray-200 rounded-2xl flex items-center justify-center mb-4 transition">
+            <i class="fas fa-sign-out-alt text-gray-500 text-2xl"></i>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Uitloggen</h3>
+          <p class="text-gray-500 text-sm mb-4">Sluit uw sessie af. U kunt later opnieuw inloggen met uw toegangscode.</p>
+          <span class="text-gray-500 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Uitloggen</span>
+        </button>
+      </div>
+    </div>
+  </main>
+  <script>
+    // Check login
+    const portalCode = sessionStorage.getItem('portal_code');
+    const patientInfo = sessionStorage.getItem('portal_patient');
+    if (!portalCode || !patientInfo) {
+      window.location.href = '/portaal/inloggen';
+    } else {
+      const p = JSON.parse(patientInfo);
+      document.getElementById('patient-name').textContent = p.first_name + ' ' + p.last_name;
+    }
+    
+    function logout() {
+      sessionStorage.removeItem('portal_code');
+      sessionStorage.removeItem('portal_patient');
+      window.location.href = '/portaal';
+    }
+  </script>
+</body></html>`)
+})
+
+// PORTAL VRAGENLIJST
+app.get('/portaal/vragenlijst', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <div class="mb-6"><a href="/portaal/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
+    
+    <div id="questionnaire-container" class="bg-white rounded-2xl shadow-lg">
+      <div class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-6 rounded-t-2xl">
+        <h2 class="text-2xl font-bold"><i class="fas fa-clipboard-check mr-2"></i>Gezondheids­vragenlijst</h2>
+        <p class="opacity-90 mt-1" id="patient-greeting">Laden...</p>
+        <p class="text-sm opacity-75">Geschatte tijd: 5-10 minuten | 15 vragen</p>
+      </div>
+      
+      <div class="p-6">
+        <div class="mb-6">
+          <div class="bg-gray-200 rounded-full h-3"><div id="progress-bar" class="bg-blue-600 h-3 rounded-full progress-bar" style="width:0%"></div></div>
+          <p id="progress-text" class="text-xs text-gray-500 mt-1">Vraag 1 van 15</p>
+        </div>
+        
+        <div id="question-container"></div>
+        
+        <div class="flex justify-between mt-8">
+          <button id="btn-prev" onclick="prevQuestion()" class="px-6 py-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 font-medium disabled:opacity-30" disabled>
+            <i class="fas fa-arrow-left mr-1"></i> Vorige
+          </button>
+          <button id="btn-next" onclick="nextQuestion()" class="bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-blue-700">
+            Volgende <i class="fas fa-arrow-right ml-1"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Results container (hidden initially) -->
+    <div id="results-container" class="hidden"></div>
+  </main>
+  
+  <script>
+    // Check login
+    const portalCode = sessionStorage.getItem('portal_code');
+    const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+    if (!portalCode) { window.location.href = '/portaal/inloggen'; }
+    
+    document.getElementById('patient-greeting').textContent = 'Hallo ' + (patientInfo.first_name || '') + ', vul onderstaande vragen eerlijk in.';
+    
+    let currentQ = 0;
+    const answers = {};
+    
+    // Pre-fill from patient data
+    if (patientInfo.gender) answers.gender = patientInfo.gender;
+    if (patientInfo.date_of_birth) answers.age = Math.floor((Date.now() - new Date(patientInfo.date_of_birth).getTime()) / 31557600000);
+    
+    const questions = [
+      { id:'gender', text:'Wat is uw geslacht?', type:'choice', options:[{value:'male',label:'Man'},{value:'female',label:'Vrouw'},{value:'other',label:'Anders'}], indicator:'Basis' },
+      { id:'age', text:'Wat is uw leeftijd?', type:'number', placeholder:'Bijv. 42', indicator:'Basis' },
+      { id:'duration_trying', text:'Hoe lang probeert u al af te vallen?', type:'choice', options:[{value:'less_3_months',label:'Minder dan 3 maanden'},{value:'3_6_months',label:'3-6 maanden'},{value:'6_12_months',label:'6-12 maanden'},{value:'over_1_year',label:'Meer dan 1 jaar'}], indicator:'Metabole weerstand' },
+      { id:'weight_loss_success', text:'Valt u af ondanks calorierestrictie en beweging?', type:'choice', options:[{value:'easy',label:'Ja, moeiteloos'},{value:'slow',label:'Langzaam maar wel'},{value:'barely',label:'Nauwelijks / plateau'},{value:'none',label:'Nee, geen resultaat'}], indicator:'Metabole weerstand' },
+      { id:'fatigue_cold_dry', text:'Bent u vaak moe, heeft u het vaak koud en heeft u droge huid?', type:'choice', options:[{value:'yes',label:'Ja, regelmatig tot dagelijks'},{value:'sometimes',label:'Soms, maar niet altijd'},{value:'no',label:'Nee, dit herken ik niet'}], indicator:'Schildklier' },
+      { id:'menstrual_regularity', text:'Vrouwen: Is uw menstruatiecyclus regelmatig?', type:'choice', options:[{value:'yes',label:'Ja, regelmatig'},{value:'irregular',label:'Onregelmatig'},{value:'no',label:'Nee'},{value:'na',label:'Niet van toepassing'}], indicator:'PCOS/Hormonen' },
+      { id:'stress_frequency', text:'Ervaart u regelmatig stress of angst?', type:'choice', options:[{value:'daily',label:'Dagelijks'},{value:'weekly',label:'Wekelijks'},{value:'rarely',label:'Zelden'},{value:'never',label:'Nooit'}], indicator:'Cortisol' },
+      { id:'sleep_quality', text:'Hoe is uw slaap?', type:'choice', options:[{value:'excellent',label:'Uitstekend (7-9 uur doorslapen)'},{value:'fair',label:'Redelijk (wordt soms wakker)'},{value:'moderate',label:'Matig (moeite met inslapen)'},{value:'poor',label:'Slecht (< 6 uur of zeer onrustig)'}], indicator:'Cortisol/Leptine' },
+      { id:'medication_use', text:'Welke medicijnen gebruikt u?', type:'multi', options:[{value:'none',label:'Geen medicijnen'},{value:'thyroid_med',label:'Schildkliermedicatie'},{value:'statins',label:'Statines (cholesterol)'},{value:'diabetes_med',label:'Diabetesmedicatie'},{value:'antidepressants',label:'Antidepressiva'},{value:'beta_blockers',label:'Bètablokkers'},{value:'other',label:'Anders'}], indicator:'Medicatie' },
+      { id:'statin_side_effects', text:'Heeft u last van spierpijn of vermoeidheid bij statinegebruik?', type:'choice', options:[{value:'yes',label:'Ja'},{value:'no',label:'Nee'},{value:'no_statins',label:'Gebruik geen statines'}], indicator:'CoQ10' },
+      { id:'hunger_after_meal', text:'Heeft u honger kort na een maaltijd (< 2 uur)?', type:'choice', options:[{value:'always',label:'Altijd'},{value:'often',label:'Vaak'},{value:'sometimes',label:'Soms'},{value:'never',label:'Nooit'}], indicator:'Insuline' },
+      { id:'fat_distribution', text:'Waar zit het meeste vet bij u?', type:'choice', options:[{value:'belly',label:'Buik (visceraal)'},{value:'hips_legs',label:'Heupen/benen'},{value:'even',label:'Gelijkmatig verdeeld'},{value:'unsure',label:'Onzeker'}], indicator:'Hormonale distributie' },
+      { id:'sugar_cravings', text:'Heeft u sterke cravings voor suiker/zoet?', type:'choice', options:[{value:'daily',label:'Dagelijks'},{value:'regularly',label:'Regelmatig'},{value:'rarely',label:'Zelden'},{value:'never',label:'Nooit'}], indicator:'Insuline/Serotonine' },
+      { id:'menopause_status', text:'Bent u in de overgang of postmenopauzaal?', type:'choice', options:[{value:'yes',label:'Ja'},{value:'no',label:'Nee'},{value:'unsure',label:'Weet niet'},{value:'na',label:'Niet van toepassing'}], indicator:'Oestrogeen' },
+      { id:'diagnosed_conditions', text:'Heeft u een diagnose van:', type:'multi', options:[{value:'diabetes',label:'Diabetes type 2'},{value:'pcos',label:'PCOS'},{value:'hashimoto',label:'Hashimoto'},{value:'thyroid',label:'Andere schildklieraandoening'},{value:'none',label:'Geen van bovenstaande'}], indicator:'Pathologie' }
+    ];
+    
+    function renderQuestion() {
+      const q = questions[currentQ];
+      const pct = ((currentQ+1)/questions.length*100).toFixed(0);
+      document.getElementById('progress-bar').style.width = pct+'%';
+      document.getElementById('progress-text').textContent = 'Vraag '+(currentQ+1)+' van '+questions.length;
+      document.getElementById('btn-prev').disabled = currentQ === 0;
+      document.getElementById('btn-next').innerHTML = currentQ === questions.length-1 ? '<i class="fas fa-paper-plane mr-1"></i> Versturen' : 'Volgende <i class="fas fa-arrow-right ml-1"></i>';
+      
+      let html = '<div class="fade-in"><div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4"><p class="text-xs text-blue-600 font-semibold mb-1"><i class="fas fa-tag mr-1"></i>'+q.indicator+'</p><p class="font-bold text-lg text-gray-800">'+(currentQ+1)+'. '+q.text+'</p></div>';
+      
+      if (q.type === 'choice') {
+        html += '<div class="space-y-2">';
+        q.options.forEach(opt => {
+          const selected = answers[q.id] === opt.value;
+          html += '<label class="block p-4 rounded-xl border-2 cursor-pointer transition '+(selected?'border-blue-500 bg-blue-50':'border-gray-200 hover:border-blue-300')+'"><input type="radio" name="'+q.id+'" value="'+opt.value+'" '+(selected?'checked':'')+' onchange="setAnswer(\\''+q.id+'\\',\\''+opt.value+'\\',\\'choice\\')" class="mr-3"> <span class="font-medium">'+opt.label+'</span></label>';
+        });
+        html += '</div>';
+      } else if (q.type === 'number') {
+        html += '<input type="number" value="'+(answers[q.id]||'')+'" oninput="setAnswer(\\''+q.id+'\\',this.value,\\'number\\')" class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="'+q.placeholder+'">';
+      } else if (q.type === 'multi') {
+        html += '<div class="space-y-2">';
+        const selected = answers[q.id] || [];
+        q.options.forEach(opt => {
+          const isChecked = selected.includes(opt.value);
+          html += '<label class="block p-4 rounded-xl border-2 cursor-pointer transition '+(isChecked?'border-blue-500 bg-blue-50':'border-gray-200 hover:border-blue-300')+'"><input type="checkbox" value="'+opt.value+'" '+(isChecked?'checked':'')+' onchange="toggleMulti(\\''+q.id+'\\',\\''+opt.value+'\\',this.checked)" class="mr-3"> <span class="font-medium">'+opt.label+'</span></label>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+      document.getElementById('question-container').innerHTML = html;
+    }
+    
+    function setAnswer(id, value, type) {
+      if (type === 'number') answers[id] = parseInt(value) || 0;
+      else answers[id] = value;
+      renderQuestion();
+    }
+    
+    function toggleMulti(id, value, checked) {
+      if (!answers[id]) answers[id] = [];
+      if (value === 'none' && checked) { answers[id] = ['none']; }
+      else if (checked) { answers[id] = answers[id].filter(v=>v!=='none'); answers[id].push(value); }
+      else { answers[id] = answers[id].filter(v => v !== value); }
+      renderQuestion();
+    }
+    
+    function nextQuestion() {
+      const q = questions[currentQ];
+      if (!answers[q.id] || (Array.isArray(answers[q.id]) && !answers[q.id].length)) {
+        alert('Beantwoord deze vraag a.u.b.');
+        return;
+      }
+      if (currentQ < questions.length - 1) { currentQ++; renderQuestion(); }
+      else { submitPortalAssessment(); }
+    }
+    
+    function prevQuestion() {
+      if (currentQ > 0) { currentQ--; renderQuestion(); }
+    }
+    
+    async function submitPortalAssessment() {
+      const btn = document.getElementById('btn-next');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Analyseren...';
+      
+      try {
+        const res = await fetch('/api/portal/assessment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ portal_code: portalCode, responses: answers })
+        });
+        const result = await res.json();
+        
+        if (res.ok) {
+          showResults(result);
+        } else {
+          alert('Fout: ' + (result.error || 'Onbekend'));
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-paper-plane mr-1"></i> Versturen';
+        }
+      } catch(e) {
+        alert('Verbindingsfout: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-paper-plane mr-1"></i> Versturen';
+      }
+    }
+    
+    function showResults(result) {
+      document.getElementById('questionnaire-container').classList.add('hidden');
+      const container = document.getElementById('results-container');
+      container.classList.remove('hidden');
+      
+      const riskColors = { high: 'from-red-500 to-red-700', medium: 'from-orange-400 to-orange-600', low: 'from-green-500 to-green-700' };
+      const riskLabels = { high: 'Hoog', medium: 'Gemiddeld', low: 'Laag' };
+      const riskText = { high: 'Er zijn meerdere risicofactoren gevonden. Uw therapeut zal dit uitgebreid met u bespreken.', medium: 'Er zijn enkele aandachtspunten gevonden. Uw therapeut bespreekt de vervolgstappen.', low: 'Uw profiel ziet er goed uit. Uw therapeut beoordeelt de details.' };
+      
+      let html = '<div class="fade-in">';
+      
+      // Success header
+      html += '<div class="bg-gradient-to-r ' + (riskColors[result.overallRisk] || riskColors.low) + ' text-white p-8 rounded-2xl mb-6 text-center">';
+      html += '<i class="fas fa-check-circle text-5xl mb-4 opacity-90"></i>';
+      html += '<h2 class="text-3xl font-black mb-2">Vragenlijst Verstuurd!</h2>';
+      html += '<p class="opacity-90 text-lg">Uw antwoorden zijn succesvol verwerkt en geanalyseerd.</p>';
+      html += '</div>';
+      
+      // Risk overview
+      html += '<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">';
+      html += '<h3 class="font-bold text-xl text-gray-800 mb-4"><i class="fas fa-chart-pie mr-2 text-portal-600"></i>Uw Resultaat Samenvatting</h3>';
+      html += '<div class="bg-gray-50 rounded-xl p-4 mb-4"><p class="text-sm text-gray-600"><strong>Algeheel risiconiveau:</strong> <span class="font-bold text-lg ml-2 ' + (result.overallRisk === 'high' ? 'text-red-600' : result.overallRisk === 'medium' ? 'text-orange-600' : 'text-green-600') + '">' + (riskLabels[result.overallRisk] || '-') + '</span></p>';
+      html += '<p class="text-sm text-gray-500 mt-2">' + (riskText[result.overallRisk] || '') + '</p></div>';
+      
+      // Categories found
+      if (result.categories?.length) {
+        html += '<h4 class="font-bold text-gray-700 mb-3"><i class="fas fa-tags mr-1"></i>Gevonden categorieën:</h4><div class="flex flex-wrap gap-2 mb-4">';
+        const catColorsMap = { high: 'bg-red-100 text-red-700 border-red-300', medium: 'bg-orange-100 text-orange-700 border-orange-300', low: 'bg-green-100 text-green-700 border-green-300' };
+        result.categories.forEach(cat => {
+          html += '<span class="px-4 py-2 rounded-full text-sm font-bold border ' + (catColorsMap[cat.risk] || 'bg-gray-100') + '">' + cat.name + '</span>';
+        });
+        html += '</div>';
+      }
+      
+      // What happens next
+      html += '<div class="bg-blue-50 border border-blue-200 rounded-xl p-4">';
+      html += '<h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-forward mr-1"></i>Wat gebeurt er nu?</h4>';
+      html += '<ul class="space-y-2 text-sm text-blue-700">';
+      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Uw therapeut Marc ontvangt en beoordeelt uw antwoorden</span></li>';
+      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Op basis hiervan worden gerichte laboratoriumtesten aanbevolen</span></li>';
+      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Na de labresultaten krijgt u een persoonlijk behandelplan</span></li>';
+      html += '<li class="flex items-start gap-2"><i class="fas fa-check text-blue-500 mt-1"></i><span>Dit plan bevat voedingsadvies, supplementen en leefstijltips</span></li>';
+      html += '</ul></div>';
+      html += '</div>';
+      
+      // Recommendations (if any)
+      if (result.recommendations?.length) {
+        html += '<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">';
+        html += '<h3 class="font-bold text-xl text-gray-800 mb-4"><i class="fas fa-lightbulb mr-2 text-amber-500"></i>Voorlopige Aanbevelingen</h3>';
+        html += '<div class="space-y-2">';
+        result.recommendations.forEach((rec, i) => {
+          html += '<div class="flex items-start gap-3 bg-amber-50 p-3 rounded-lg"><span class="font-bold text-amber-600 min-w-[24px]">' + (i+1) + '.</span><span class="text-sm text-amber-800">' + rec + '</span></div>';
+        });
+        html += '</div></div>';
+      }
+      
+      // Actions
+      html += '<div class="flex flex-col sm:flex-row gap-4">';
+      html += '<a href="/portaal/menu" class="bg-portal-600 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-portal-700 transition"><i class="fas fa-home mr-2"></i>Terug naar Menu</a>';
+      html += '<a href="/portaal/lab-upload" class="bg-amber-500 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-amber-600 transition"><i class="fas fa-file-upload mr-2"></i>Lab-formulier Uploaden</a>';
+      html += '<button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-xl font-medium hover:bg-gray-50 transition"><i class="fas fa-print mr-2"></i>Print</button>';
+      html += '</div>';
+      
+      html += '</div>';
+      container.innerHTML = html;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    
+    renderQuestion();
+  </script>
+</body></html>`)
+})
+
+// PORTAL LAB UPLOAD
+app.get('/portaal/lab-upload', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-2xl mx-auto px-4 py-8">
+    <div class="mb-6"><a href="/portaal/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
+    
+    <div class="bg-white rounded-2xl shadow-lg overflow-hidden fade-in">
+      <div class="bg-gradient-to-r from-amber-500 to-orange-500 text-white p-6">
+        <h2 class="text-2xl font-bold"><i class="fas fa-file-upload mr-2"></i>Lab-formulier Uploaden</h2>
+        <p class="opacity-90 mt-1">Upload een foto of scan van uw labresultaten</p>
+      </div>
+      
+      <div class="p-6">
+        <div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded mb-6">
+          <p class="text-sm text-amber-800"><i class="fas fa-info-circle mr-2"></i>
+            Upload hier uw labresultaten (bloedonderzoek of ontlastingsonderzoek). 
+            Uw therapeut verwerkt de waarden in uw dossier. Ondersteunde formaten: foto's (JPG, PNG) en PDF-bestanden.
+          </p>
+        </div>
+        
+        <!-- File Drop Zone -->
+        <div id="drop-zone" class="border-2 border-dashed border-gray-300 rounded-2xl p-12 text-center cursor-pointer hover:border-portal-400 hover:bg-portal-50/30 transition mb-6" onclick="document.getElementById('file-input').click()">
+          <i class="fas fa-cloud-upload-alt text-5xl text-gray-300 mb-4"></i>
+          <p class="text-gray-600 font-semibold mb-2">Klik hier of sleep een bestand</p>
+          <p class="text-sm text-gray-400">JPG, PNG of PDF (max 10 MB)</p>
+          <input type="file" id="file-input" accept="image/*,.pdf" class="hidden" onchange="fileSelected(this)">
+        </div>
+        
+        <!-- File Preview -->
+        <div id="file-preview" class="hidden mb-6">
+          <div class="border rounded-xl p-4 flex items-center gap-4 bg-gray-50">
+            <div id="preview-icon" class="w-16 h-16 bg-blue-100 rounded-xl flex items-center justify-center flex-shrink-0">
+              <i class="fas fa-file-image text-blue-600 text-2xl"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p id="file-name" class="font-semibold text-gray-800 truncate">bestand.jpg</p>
+              <p id="file-size" class="text-sm text-gray-400">0 KB</p>
+            </div>
+            <button onclick="removeFile()" class="text-red-400 hover:text-red-600 p-2"><i class="fas fa-times text-lg"></i></button>
+          </div>
+          <div id="preview-image" class="mt-3 hidden">
+            <img id="image-preview" class="max-h-64 rounded-xl border mx-auto" alt="Preview">
+          </div>
+        </div>
+        
+        <!-- Notes -->
+        <div class="mb-6">
+          <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-comment mr-1"></i>Opmerkingen (optioneel)</label>
+          <textarea id="upload-notes" rows="3" class="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-portal-500 focus:border-portal-500" placeholder="Bijv. 'Bloedonderzoek van 5 maart, huisarts resultaten' of 'Ontlastingstest via Biovis'"></textarea>
+        </div>
+        
+        <!-- Submit -->
+        <button id="upload-btn" onclick="submitUpload()" disabled class="w-full bg-portal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+          <i class="fas fa-paper-plane mr-2"></i>Versturen naar Therapeut
+        </button>
+        
+        <div id="upload-result" class="hidden mt-4"></div>
+      </div>
+    </div>
+  </main>
+  
+  <script>
+    // Check login
+    const portalCode = sessionStorage.getItem('portal_code');
+    if (!portalCode) { window.location.href = '/portaal/inloggen'; }
+    
+    let selectedFile = null;
+    
+    // Drag & Drop
+    const dropZone = document.getElementById('drop-zone');
+    ['dragenter','dragover'].forEach(ev => {
+      dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add('border-portal-500','bg-portal-50'); });
+    });
+    ['dragleave','drop'].forEach(ev => {
+      dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.remove('border-portal-500','bg-portal-50'); });
+    });
+    dropZone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer.files;
+      if (files.length) handleFile(files[0]);
+    });
+    
+    function fileSelected(input) {
+      if (input.files.length) handleFile(input.files[0]);
+    }
+    
+    function handleFile(file) {
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Bestand is te groot (max 10 MB).');
+        return;
+      }
+      selectedFile = file;
+      document.getElementById('file-preview').classList.remove('hidden');
+      document.getElementById('drop-zone').classList.add('hidden');
+      document.getElementById('file-name').textContent = file.name;
+      document.getElementById('file-size').textContent = (file.size / 1024).toFixed(0) + ' KB';
+      document.getElementById('upload-btn').disabled = false;
+      
+      // Preview
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          document.getElementById('image-preview').src = e.target.result;
+          document.getElementById('preview-image').classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+        document.getElementById('preview-icon').innerHTML = '<i class="fas fa-file-image text-blue-600 text-2xl"></i>';
+      } else {
+        document.getElementById('preview-icon').innerHTML = '<i class="fas fa-file-pdf text-red-600 text-2xl"></i>';
+        document.getElementById('preview-image').classList.add('hidden');
+      }
+    }
+    
+    function removeFile() {
+      selectedFile = null;
+      document.getElementById('file-preview').classList.add('hidden');
+      document.getElementById('drop-zone').classList.remove('hidden');
+      document.getElementById('preview-image').classList.add('hidden');
+      document.getElementById('upload-btn').disabled = true;
+      document.getElementById('file-input').value = '';
+    }
+    
+    async function submitUpload() {
+      if (!selectedFile) return;
+      const btn = document.getElementById('upload-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Versturen...';
+      
+      const notes = document.getElementById('upload-notes').value.trim();
+      
+      try {
+        const res = await fetch('/api/portal/lab-upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            portal_code: portalCode,
+            file_name: selectedFile.name,
+            file_type: selectedFile.type,
+            file_size: selectedFile.size,
+            notes: notes
+          })
+        });
+        const data = await res.json();
+        
+        const resultDiv = document.getElementById('upload-result');
+        if (res.ok) {
+          resultDiv.innerHTML = '<div class="bg-green-50 border border-green-200 rounded-xl p-6 text-center"><i class="fas fa-check-circle text-green-500 text-4xl mb-3"></i><p class="font-bold text-green-800 text-lg mb-2">Succesvol verstuurd!</p><p class="text-green-700 text-sm">' + (data.message || 'Uw document is ontvangen.') + '</p><a href="/portaal/menu" class="inline-block mt-4 bg-portal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-portal-700 transition"><i class="fas fa-home mr-1"></i>Terug naar menu</a></div>';
+          resultDiv.classList.remove('hidden');
+          document.getElementById('file-preview').classList.add('hidden');
+          btn.classList.add('hidden');
+        } else {
+          resultDiv.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-xl p-4"><p class="text-red-700"><i class="fas fa-exclamation-circle mr-1"></i>' + (data.error || 'Fout bij uploaden') + '</p></div>';
+          resultDiv.classList.remove('hidden');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Versturen naar Therapeut';
+        }
+      } catch(e) {
+        alert('Verbindingsfout: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Versturen naar Therapeut';
+      }
+    }
+  </script>
+</body></html>`)
+})
+
+// =====================================================
+// THERAPEUT: Genereer toegangscode knop (toevoegen aan patient profiel)
+// =====================================================
+app.get('/api/patients/:id/portal-code', async (c) => {
+  const db = getSupabase(c.env)
+  // Try portal_code column first
+  const { data, error } = await db
+    .from('patients')
+    .select('portal_code, portal_code_created_at, notes')
+    .eq('id', c.req.param('id'))
+    .single()
+  if (error) return c.json({ error: error.message }, 500)
+  
+  // If no portal_code column, check notes
+  let portalCode = data.portal_code
+  if (!portalCode && data.notes?.includes('PORTAL_CODE:')) {
+    const match = data.notes.match(/PORTAL_CODE:([A-Z0-9]+)/)
+    if (match) portalCode = match[1]
+  }
+  
+  return c.json({ portal_code: portalCode, portal_code_created_at: data.portal_code_created_at })
 })
 
 export default app
