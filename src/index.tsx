@@ -420,23 +420,23 @@ const htmlHead = `<!DOCTYPE html>
 const navBar = `
 <nav class="bg-gradient-to-r from-primary-700 to-primary-900 text-white shadow-lg">
   <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
-    <a href="/" class="flex items-center gap-3 hover:opacity-90">
+    <a href="/admin" class="flex items-center gap-3 hover:opacity-90">
       <i class="fas fa-weight text-2xl"></i>
       <div>
         <h1 class="text-lg font-bold leading-tight">Weight Loss Assessment</h1>
-        <p class="text-xs opacity-75">Marc's Praktijk</p>
+        <p class="text-xs opacity-75">Admin - Marc's Praktijk</p>
       </div>
     </a>
     <div class="flex items-center gap-4">
-      <a href="/" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-home mr-1"></i> Dashboard</a>
-      <a href="/patients" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-users mr-1"></i> Patiënten</a>
-      <a href="/new-patient" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
+      <a href="/admin" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-home mr-1"></i> Dashboard</a>
+      <a href="/admin/patients" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-users mr-1"></i> Patiënten</a>
+      <a href="/admin/new-patient" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
     </div>
   </div>
 </nav>`
 
 // DASHBOARD
-app.get('/', (c) => {
+app.get('/admin', (c) => {
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
@@ -478,7 +478,7 @@ app.get('/', (c) => {
     <div class="bg-white rounded-xl shadow">
       <div class="p-6 border-b flex items-center justify-between">
         <h3 class="text-lg font-bold text-gray-800"><i class="fas fa-clock mr-2 text-primary-600"></i>Recente Patiënten</h3>
-        <a href="/new-patient" class="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-primary-700"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
+        <a href="/admin/new-patient" class="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-primary-700"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
       </div>
       <div id="patient-list" class="p-6">
         <p class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin mr-2"></i>Laden...</p>
@@ -503,7 +503,7 @@ app.get('/', (c) => {
 
         const list = document.getElementById('patient-list');
         if (!patients.length) {
-          list.innerHTML = '<div class="text-center py-12"><i class="fas fa-user-plus text-4xl text-gray-300 mb-4"></i><p class="text-gray-400 mb-4">Nog geen patiënten</p><a href="/new-patient" class="bg-primary-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-primary-700">Voeg eerste patiënt toe</a></div>';
+          list.innerHTML = '<div class="text-center py-12"><i class="fas fa-user-plus text-4xl text-gray-300 mb-4"></i><p class="text-gray-400 mb-4">Nog geen patiënten</p><a href="/admin/new-patient" class="bg-primary-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-primary-700">Voeg eerste patiënt toe</a></div>';
           return;
         }
 
@@ -517,7 +517,7 @@ app.get('/', (c) => {
             const cats = lastAssessment?.categories || [];
             const catTags = cats.map(cat => '<span class="inline-block px-2 py-1 rounded-full text-xs font-semibold ' + (categoryColors[cat.id]||'bg-gray-100 text-gray-700') + '">' + (categoryNames[cat.id]||cat.name) + '</span>').join(' ');
             const statusBadge = lastAssessment ? '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">Assessment voltooid</span>' : '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">Nieuw</span>';
-            return '<tr class="border-b hover:bg-gray-50"><td class="py-3 font-semibold">' + p.first_name + ' ' + p.last_name + '</td><td class="py-3">' + age + '</td><td class="py-3"><div class="flex flex-wrap gap-1">' + (catTags||'-') + '</div></td><td class="py-3">' + statusBadge + '</td><td class="py-3"><a href="/patient/' + p.id + '" class="text-primary-600 hover:text-primary-800 font-semibold text-sm mr-3"><i class="fas fa-eye mr-1"></i>Bekijk</a>' + (!lastAssessment ? '<a href="/triage/' + p.id + '" class="text-green-600 hover:text-green-800 font-semibold text-sm mr-3"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>' : '') + '<button onclick="deletePatient(\\'' + p.id + '\\',\\'' + p.first_name + ' ' + p.last_name + '\\')" class="text-red-400 hover:text-red-600 text-sm" title="Verwijder patiënt"><i class="fas fa-trash-alt"></i></button></td></tr>';
+            return '<tr class="border-b hover:bg-gray-50"><td class="py-3 font-semibold">' + p.first_name + ' ' + p.last_name + '</td><td class="py-3">' + age + '</td><td class="py-3"><div class="flex flex-wrap gap-1">' + (catTags||'-') + '</div></td><td class="py-3">' + statusBadge + '</td><td class="py-3"><a href="/admin/patient/' + p.id + '" class="text-primary-600 hover:text-primary-800 font-semibold text-sm mr-3"><i class="fas fa-eye mr-1"></i>Bekijk</a>' + (!lastAssessment ? '<a href="/admin/triage/' + p.id + '" class="text-green-600 hover:text-green-800 font-semibold text-sm mr-3"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>' : '') + '<button onclick="deletePatient(\\'' + p.id + '\\',\\'' + p.first_name + ' ' + p.last_name + '\\')" class="text-red-400 hover:text-red-600 text-sm" title="Verwijder patiënt"><i class="fas fa-trash-alt"></i></button></td></tr>';
           }).join('') + '</tbody></table>';
       } catch(e) {
         console.error(e);
@@ -540,7 +540,7 @@ app.get('/', (c) => {
 })
 
 // NEW PATIENT PAGE
-app.get('/new-patient', (c) => {
+app.get('/admin/new-patient', (c) => {
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
@@ -586,7 +586,7 @@ app.get('/new-patient', (c) => {
         const res = await fetch('/api/patients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
         const result = await res.json();
         if (res.ok) {
-          window.location.href = '/triage/' + result.id;
+          window.location.href = '/admin/triage/' + result.id;
         } else {
           document.getElementById('form-message').className = 'mt-4 p-4 bg-red-50 text-red-700 rounded-lg';
           document.getElementById('form-message').textContent = result.error || 'Fout bij opslaan';
@@ -601,14 +601,14 @@ app.get('/new-patient', (c) => {
 })
 
 // PATIENTS LIST PAGE
-app.get('/patients', (c) => {
+app.get('/admin/patients', (c) => {
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
   <main class="max-w-7xl mx-auto px-4 py-8">
     <div class="flex justify-between items-center mb-8">
       <div><h2 class="text-2xl font-bold text-gray-800">Patiënten</h2><p class="text-gray-500">Alle actieve patiënten</p></div>
-      <a href="/new-patient" class="bg-primary-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-primary-700"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
+      <a href="/admin/new-patient" class="bg-primary-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-primary-700"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
     </div>
     <div id="patients-container" class="bg-white rounded-xl shadow p-6">
       <p class="text-gray-400 text-center py-8"><i class="fas fa-spinner fa-spin mr-2"></i>Laden...</p>
@@ -627,7 +627,7 @@ app.get('/patients', (c) => {
           const age = p.date_of_birth ? Math.floor((Date.now()-new Date(p.date_of_birth).getTime())/31557600000) : '-';
           const lastA = p.assessments?.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
           const cats = (lastA?.categories||[]).map(c => '<span class="px-2 py-1 rounded-full text-xs font-semibold '+(catColors[c.id]||'bg-gray-100 text-gray-700')+'">'+(categoryNames[c.id]||c.name)+'</span>').join(' ');
-          return '<a href="/patient/'+p.id+'" class="block border rounded-xl p-4 hover:shadow-md transition card-hover"><div class="flex items-center justify-between"><div><p class="font-bold text-gray-800">'+p.first_name+' '+p.last_name+'</p><p class="text-sm text-gray-500">'+age+' jaar | '+new Date(p.created_at).toLocaleDateString('nl-NL')+'</p></div><div class="flex flex-wrap gap-1">'+cats+'</div></div></a>';
+          return '<a href="/admin/patient/'+p.id+'" class="block border rounded-xl p-4 hover:shadow-md transition card-hover"><div class="flex items-center justify-between"><div><p class="font-bold text-gray-800">'+p.first_name+' '+p.last_name+'</p><p class="text-sm text-gray-500">'+age+' jaar | '+new Date(p.created_at).toLocaleDateString('nl-NL')+'</p></div><div class="flex flex-wrap gap-1">'+cats+'</div></div></a>';
         }).join('') + '</div>';
       } catch(e) { container.innerHTML = '<p class="text-red-500 text-center">Fout bij laden: '+e.message+'</p>'; }
     }
@@ -637,7 +637,7 @@ app.get('/patients', (c) => {
 })
 
 // QUICK TRIAGE PAGE
-app.get('/triage/:patientId', (c) => {
+app.get('/admin/triage/:patientId', (c) => {
   const patientId = c.req.param('patientId')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
@@ -776,7 +776,7 @@ app.get('/triage/:patientId', (c) => {
         });
         const result = await res.json();
         if (res.ok) {
-          window.location.href = '/results/' + patientId + '/' + result.assessment.id;
+          window.location.href = '/admin/results/' + patientId + '/' + result.assessment.id;
         } else {
           alert('Fout: ' + (result.error || 'Onbekend'));
           document.getElementById('btn-next').disabled = false;
@@ -794,14 +794,14 @@ app.get('/triage/:patientId', (c) => {
 })
 
 // RESULTS PAGE - Risicoprofiel + Bloed + Ontlasting
-app.get('/results/:patientId/:assessmentId', (c) => {
+app.get('/admin/results/:patientId/:assessmentId', (c) => {
   const patientId = c.req.param('patientId')
   const assessmentId = c.req.param('assessmentId')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
   <main class="max-w-5xl mx-auto px-4 py-8">
-    <div class="mb-6"><a href="/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
+    <div class="mb-6"><a href="/admin/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
     <div id="results-container"><p class="text-center py-12 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Resultaten laden...</p></div>
   </main>
   <script>
@@ -993,12 +993,12 @@ app.get('/results/:patientId/:assessmentId', (c) => {
           }
 
           // Lab entry link
-          html += '<div class="p-6"><a href="/lab-entry/'+patientId+'/'+latestLab.id+'" class="inline-block bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-edit mr-2"></i>Resultaten Invoeren</a></div>';
+          html += '<div class="p-6"><a href="/admin/lab-entry/'+patientId+'/'+latestLab.id+'" class="inline-block bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-edit mr-2"></i>Resultaten Invoeren</a></div>';
           html += '</div>';
         }
 
         // ============ ACTION BUTTONS ============
-        html += '<div class="bg-white rounded-xl shadow p-6 flex flex-wrap gap-3"><a href="/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-user mr-2"></i>Patiëntprofiel</a><a href="/assessment/'+patientId+'/'+assessmentId+'" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700"><i class="fas fa-clipboard-list mr-2"></i>Assessment Details</a><button onclick="generateProtocol()" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-file-medical mr-2"></i>Genereer Protocol</button><button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-print mr-2"></i>Print</button></div>';
+        html += '<div class="bg-white rounded-xl shadow p-6 flex flex-wrap gap-3"><a href="/admin/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-user mr-2"></i>Patiëntprofiel</a><a href="/admin/assessment/'+patientId+'/'+assessmentId+'" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700"><i class="fas fa-clipboard-list mr-2"></i>Assessment Details</a><button onclick="generateProtocol()" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-file-medical mr-2"></i>Genereer Protocol</button><button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-print mr-2"></i>Print</button></div>';
 
         document.getElementById('results-container').innerHTML = html;
       } catch(e) {
@@ -1015,7 +1015,7 @@ app.get('/results/:patientId/:assessmentId', (c) => {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({patient_id:patientId,assessment_id:assessmentId,categories:categoryIds})
         });
-        if (res.ok) { window.location.href = '/patient/'+patientId; }
+        if (res.ok) { window.location.href = '/admin/patient/'+patientId; }
         else { const err = await res.json(); alert('Fout: '+(err.error||'Onbekend')); }
       } catch(e) { alert('Fout: '+e.message); }
     }
@@ -1026,7 +1026,7 @@ app.get('/results/:patientId/:assessmentId', (c) => {
 })
 
 // PATIENT PROFILE PAGE - Extended with symptom scores, charts, lab trends, follow-ups
-app.get('/patient/:id', (c) => {
+app.get('/admin/patient/:id', (c) => {
   const patientId = c.req.param('id')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
@@ -1067,13 +1067,13 @@ app.get('/patient/:id', (c) => {
 
         let html = '';
         // Header
-        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold">'+p.first_name+' '+p.last_name+'</h2><p class="opacity-90">'+age+' jaar | '+genderLabel+' | '+( p.email||'Geen email')+'</p></div><div class="flex gap-2 flex-wrap">'+(lastAssessment?'':'<a href="/triage/'+p.id+'" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>')+'<button onclick="generatePortalCode()" class="bg-green-500/30 hover:bg-green-500/50 text-white px-3 py-2 rounded-lg text-sm font-semibold border border-green-300/30"><i class="fas fa-key mr-1"></i>Portaal Code</button><button onclick="deletePatientPermanent()" class="bg-red-500/20 hover:bg-red-500/40 text-white px-3 py-2 rounded-lg text-sm font-semibold border border-red-300/30"><i class="fas fa-trash-alt mr-1"></i>Verwijder</button></div></div></div><div class="p-6"><div class="flex flex-wrap gap-2 items-center">'+( catTags||'<span class="text-gray-400">Nog geen assessment</span>')+'<span id="portal-code-badge" class="hidden ml-2 px-3 py-1 rounded-full text-sm font-mono font-bold bg-green-100 text-green-700 border border-green-300"><i class="fas fa-key mr-1"></i><span id="portal-code-value"></span></span></div></div></div>';
+        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-primary-600 to-primary-800 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold">'+p.first_name+' '+p.last_name+'</h2><p class="opacity-90">'+age+' jaar | '+genderLabel+' | '+( p.email||'Geen email')+'</p></div><div class="flex gap-2 flex-wrap">'+(lastAssessment?'':'<a href="/admin/triage/'+p.id+'" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-clipboard-check mr-1"></i>Start Triage</a>')+'<button onclick="generatePortalCode()" class="bg-green-500/30 hover:bg-green-500/50 text-white px-3 py-2 rounded-lg text-sm font-semibold border border-green-300/30"><i class="fas fa-key mr-1"></i>Portaal Code</button><button onclick="deletePatientPermanent()" class="bg-red-500/20 hover:bg-red-500/40 text-white px-3 py-2 rounded-lg text-sm font-semibold border border-red-300/30"><i class="fas fa-trash-alt mr-1"></i>Verwijder</button></div></div></div><div class="p-6"><div class="flex flex-wrap gap-2 items-center">'+( catTags||'<span class="text-gray-400">Nog geen assessment</span>')+'<span id="portal-code-badge" class="hidden ml-2 px-3 py-1 rounded-full text-sm font-mono font-bold bg-green-100 text-green-700 border border-green-300"><i class="fas fa-key mr-1"></i><span id="portal-code-value"></span></span></div></div></div>';
 
         // Assessment Historie
         const assessments = (p.assessments||[]).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
-        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="p-4 border-b flex items-center justify-between"><h3 class="font-bold text-lg"><i class="fas fa-clipboard-list mr-2 text-blue-600"></i>Assessment Historie ('+assessments.length+')</h3>'+(assessments.length?'<a href="/triage/'+p.id+'" class="bg-blue-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-blue-700"><i class="fas fa-plus mr-1"></i>Nieuwe Triage</a>':'')+'</div><div class="p-4">';
+        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="p-4 border-b flex items-center justify-between"><h3 class="font-bold text-lg"><i class="fas fa-clipboard-list mr-2 text-blue-600"></i>Assessment Historie ('+assessments.length+')</h3>'+(assessments.length?'<a href="/admin/triage/'+p.id+'" class="bg-blue-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-blue-700"><i class="fas fa-plus mr-1"></i>Nieuwe Triage</a>':'')+'</div><div class="p-4">';
         if (!assessments.length) {
-          html += '<div class="text-center py-6"><i class="fas fa-clipboard text-4xl text-gray-300 mb-3"></i><p class="text-gray-400 mb-3">Nog geen assessments afgenomen</p><a href="/triage/'+p.id+'" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700"><i class="fas fa-clipboard-check mr-1"></i>Start eerste triage</a></div>';
+          html += '<div class="text-center py-6"><i class="fas fa-clipboard text-4xl text-gray-300 mb-3"></i><p class="text-gray-400 mb-3">Nog geen assessments afgenomen</p><a href="/admin/triage/'+p.id+'" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700"><i class="fas fa-clipboard-check mr-1"></i>Start eerste triage</a></div>';
         } else {
           html += '<div class="space-y-3">';
           assessments.forEach((a, idx) => {
@@ -1082,7 +1082,7 @@ app.get('/patient/:id', (c) => {
             const riskBadge = aCats.some(c=>c.risk==='high') ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">HOOG RISICO</span>' : aCats.some(c=>c.risk==='medium') ? '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">GEMIDDELD</span>' : '<span class="px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">LAAG</span>';
             const date = new Date(a.created_at).toLocaleDateString('nl-NL',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
             const typeLabel = {quick:'Quick Triage',standard:'Standard Assessment',deep:'Deep Dive'}[a.assessment_type]||a.assessment_type;
-            html += '<a href="/assessment/'+p.id+'/'+a.id+'" class="block border rounded-xl p-4 hover:shadow-md transition card-hover '+(idx===0?'border-blue-200 bg-blue-50/30':'border-gray-200')+'"><div class="flex items-start justify-between"><div class="flex-1"><div class="flex items-center gap-2 mb-1"><span class="font-bold text-gray-800">'+typeLabel+'</span>'+(idx===0?'<span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 font-semibold">Meest Recent</span>':'')+'</div><p class="text-sm text-gray-500 mb-2"><i class="far fa-calendar mr-1"></i>'+date+'</p><div class="flex flex-wrap gap-1">'+aCatTags+'</div></div><div class="flex flex-col items-end gap-2">'+riskBadge+'<span class="text-primary-600 text-sm font-semibold"><i class="fas fa-eye mr-1"></i>Bekijk details</span></div></div></a>';
+            html += '<a href="/admin/assessment/'+p.id+'/'+a.id+'" class="block border rounded-xl p-4 hover:shadow-md transition card-hover '+(idx===0?'border-blue-200 bg-blue-50/30':'border-gray-200')+'"><div class="flex items-start justify-between"><div class="flex-1"><div class="flex items-center gap-2 mb-1"><span class="font-bold text-gray-800">'+typeLabel+'</span>'+(idx===0?'<span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700 font-semibold">Meest Recent</span>':'')+'</div><p class="text-sm text-gray-500 mb-2"><i class="far fa-calendar mr-1"></i>'+date+'</p><div class="flex flex-wrap gap-1">'+aCatTags+'</div></div><div class="flex flex-col items-end gap-2">'+riskBadge+'<span class="text-primary-600 text-sm font-semibold"><i class="fas fa-eye mr-1"></i>Bekijk details</span></div></div></a>';
           });
           html += '</div>';
         }
@@ -1102,7 +1102,7 @@ app.get('/patient/:id', (c) => {
             const statusLabel = {recommended:'Aanbevolen',ordered:'Aangevraagd',completed:'Voltooid'}[lab.status]||lab.status;
             html += '<div class="border rounded-lg p-3 mb-3"><div class="flex items-center justify-between mb-2"><span class="font-semibold text-sm">'+lab.test_package+'</span><div class="flex items-center gap-2"><span class="text-xs text-gray-400">'+new Date(lab.created_at).toLocaleDateString('nl-NL')+'</span><span class="px-2 py-1 rounded-full text-xs font-semibold '+statusBadge+'">'+statusLabel+'</span></div></div>';
             if (lab.status === 'recommended' || lab.status === 'ordered') {
-              html += '<a href="/lab-entry/'+patientId+'/'+lab.id+'" class="text-sm text-blue-600 hover:text-blue-800 font-semibold"><i class="fas fa-edit mr-1"></i>Resultaten invoeren</a>';
+              html += '<a href="/admin/lab-entry/'+patientId+'/'+lab.id+'" class="text-sm text-blue-600 hover:text-blue-800 font-semibold"><i class="fas fa-edit mr-1"></i>Resultaten invoeren</a>';
             }
             if (lab.status === 'completed' && lab.interpretations?.length) {
               html += '<div class="mt-2 space-y-2">';
@@ -1156,7 +1156,7 @@ app.get('/patient/:id', (c) => {
           protocols.forEach(proto => {
             const supps = proto.supplements || [];
             html += '<div class="border rounded-lg p-3 mb-3"><div class="flex items-center justify-between mb-2"><span class="font-semibold text-sm">'+proto.protocol_type+'</span><span class="px-2 py-1 rounded-full text-xs font-semibold '+(proto.status==='active'?'bg-green-100 text-green-700':'bg-gray-100 text-gray-600')+'">'+proto.status+'</span></div>';
-            html += '<a href="/protocol/'+patientId+'/'+proto.id+'" class="text-sm text-purple-600 hover:text-purple-800 font-semibold"><i class="fas fa-eye mr-1"></i>Bekijk volledig protocol ('+supps.length+' supplementen)</a></div>';
+            html += '<a href="/admin/protocol/'+patientId+'/'+proto.id+'" class="text-sm text-purple-600 hover:text-purple-800 font-semibold"><i class="fas fa-eye mr-1"></i>Bekijk volledig protocol ('+supps.length+' supplementen)</a></div>';
           });
         }
         html += '</div></div>';
@@ -1501,7 +1501,7 @@ app.get('/patient/:id', (c) => {
       if (!confirm('Weet je zeker dat je "' + name + '" definitief wilt verwijderen?\\n\\nAlle bijbehorende data (assessments, lab-testen, protocollen, progressie) wordt ook verwijderd.\\n\\nDit kan NIET ongedaan worden gemaakt!')) return;
       try {
         const res = await fetch('/api/patients/' + patientId + '/permanent', { method: 'DELETE' });
-        if (res.ok) { window.location.href = '/'; }
+        if (res.ok) { window.location.href = '/admin'; }
         else { const err = await res.json(); alert('Fout: ' + (err.error || 'Onbekend')); }
       } catch(e) { alert('Fout: ' + e.message); }
     }
@@ -1533,7 +1533,7 @@ app.get('/patient/:id', (c) => {
         if (res.ok) {
           document.getElementById('portal-code-badge').classList.remove('hidden');
           document.getElementById('portal-code-value').textContent = data.code;
-          alert('Portaalcode gegenereerd voor ' + name + ':\\n\\n' + data.code + '\\n\\nDe patiënt kan hiermee inloggen op:\\n' + window.location.origin + '/portaal');
+          alert('Portaalcode gegenereerd voor ' + name + ':\\n\\n' + data.code + '\\n\\nDe patiënt kan hiermee inloggen op:\\n' + window.location.origin + '/');
         } else {
           alert('Fout: ' + (data.error || 'Onbekend'));
         }
@@ -1559,14 +1559,14 @@ app.get('/patient/:id', (c) => {
 })
 
 // LAB RESULTS ENTRY PAGE (Bloed + Ontlasting)
-app.get('/lab-entry/:patientId/:labId', (c) => {
+app.get('/admin/lab-entry/:patientId/:labId', (c) => {
   const patientId = c.req.param('patientId')
   const labId = c.req.param('labId')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
   <main class="max-w-4xl mx-auto px-4 py-8">
-    <div class="mb-6"><a href="/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
+    <div class="mb-6"><a href="/admin/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
     <div class="bg-white rounded-xl shadow">
       <div class="bg-gradient-to-r from-green-500 to-teal-500 text-white p-6 rounded-t-xl">
         <h2 class="text-2xl font-bold"><i class="fas fa-vial mr-2"></i>Lab-resultaten Invoeren</h2>
@@ -1666,7 +1666,7 @@ app.get('/lab-entry/:patientId/:labId', (c) => {
           html += '</div></div>';
         }
 
-        html += '<div class="flex gap-4 mt-6 border-t pt-6"><button type="submit" class="bg-green-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-save mr-2"></i>Opslaan & Interpreteer</button><a href="/patient/'+patientId+'" class="px-6 py-3 rounded-lg border text-gray-600 hover:bg-gray-50">Annuleren</a></div></form>';
+        html += '<div class="flex gap-4 mt-6 border-t pt-6"><button type="submit" class="bg-green-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-save mr-2"></i>Opslaan & Interpreteer</button><a href="/admin/patient/'+patientId+'" class="px-6 py-3 rounded-lg border text-gray-600 hover:bg-gray-50">Annuleren</a></div></form>';
 
         document.getElementById('lab-form-container').innerHTML = html;
       } catch(e) {
@@ -1687,7 +1687,7 @@ app.get('/lab-entry/:patientId/:labId', (c) => {
           body: JSON.stringify({results})
         });
         const data = await res.json();
-        if(res.ok) { window.location.href = '/patient/'+patientId; }
+        if(res.ok) { window.location.href = '/admin/patient/'+patientId; }
         else alert('Fout: '+(data.error||'Onbekend'));
       } catch(e) { alert('Fout: '+e.message); }
     }
@@ -1698,14 +1698,14 @@ app.get('/lab-entry/:patientId/:labId', (c) => {
 })
 
 // ASSESSMENT DETAIL PAGE - Volledige vragenlijst teruglezen
-app.get('/assessment/:patientId/:assessmentId', (c) => {
+app.get('/admin/assessment/:patientId/:assessmentId', (c) => {
   const patientId = c.req.param('patientId')
   const assessmentId = c.req.param('assessmentId')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
   <main class="max-w-4xl mx-auto px-4 py-8">
-    <div class="mb-6"><a href="/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
+    <div class="mb-6"><a href="/admin/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
     <div id="assessment-detail"><p class="text-center py-12 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Assessment laden...</p></div>
   </main>
   <script>
@@ -1797,7 +1797,7 @@ app.get('/assessment/:patientId/:assessmentId', (c) => {
         let html = '';
 
         // Header
-        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-blue-600 to-cyan-600 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold"><i class="fas fa-clipboard-list mr-2"></i>'+typeLabel+': '+patient.first_name+' '+patient.last_name+'</h2><p class="opacity-90 mt-1"><i class="far fa-calendar mr-1"></i> '+date+'</p></div><div class="flex gap-2"><a href="/results/'+patientId+'/'+assessmentId+'" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-chart-bar mr-1"></i>Resultaten</a><button onclick="window.print()" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-print mr-1"></i>Print</button></div></div></div>';
+        html += '<div class="bg-white rounded-xl shadow mb-6"><div class="bg-gradient-to-r from-blue-600 to-cyan-600 text-white p-6 rounded-t-xl"><div class="flex items-center justify-between"><div><h2 class="text-2xl font-bold"><i class="fas fa-clipboard-list mr-2"></i>'+typeLabel+': '+patient.first_name+' '+patient.last_name+'</h2><p class="opacity-90 mt-1"><i class="far fa-calendar mr-1"></i> '+date+'</p></div><div class="flex gap-2"><a href="/admin/results/'+patientId+'/'+assessmentId+'" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-chart-bar mr-1"></i>Resultaten</a><button onclick="window.print()" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-print mr-1"></i>Print</button></div></div></div>';
 
         // Categorisering samenvatting
         html += '<div class="p-6 border-b"><h3 class="font-bold text-lg mb-3"><i class="fas fa-tags mr-2 text-primary-600"></i>Categorisering</h3><div class="flex flex-wrap gap-2 mb-4">';
@@ -1865,7 +1865,7 @@ app.get('/assessment/:patientId/:assessmentId', (c) => {
         }
 
         // Action buttons
-        html += '<div class="p-6 border-t bg-gray-50 rounded-b-xl flex flex-wrap gap-3"><a href="/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-user mr-2"></i>Patiëntprofiel</a><a href="/results/'+patientId+'/'+assessmentId+'" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-chart-bar mr-2"></i>Resultaten & Lab</a><button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-white"><i class="fas fa-print mr-2"></i>Print Assessment</button></div>';
+        html += '<div class="p-6 border-t bg-gray-50 rounded-b-xl flex flex-wrap gap-3"><a href="/admin/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-user mr-2"></i>Patiëntprofiel</a><a href="/admin/results/'+patientId+'/'+assessmentId+'" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700"><i class="fas fa-chart-bar mr-2"></i>Resultaten & Lab</a><button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-white"><i class="fas fa-print mr-2"></i>Print Assessment</button></div>';
 
         html += '</div>';
         document.getElementById('assessment-detail').innerHTML = html;
@@ -1880,14 +1880,14 @@ app.get('/assessment/:patientId/:assessmentId', (c) => {
 })
 
 // PROTOCOL DETAIL PAGE
-app.get('/protocol/:patientId/:protocolId', (c) => {
+app.get('/admin/protocol/:patientId/:protocolId', (c) => {
   const patientId = c.req.param('patientId')
   const protocolId = c.req.param('protocolId')
   return c.html(`${htmlHead}
 <body class="bg-gray-50 min-h-screen">
   ${navBar}
   <main class="max-w-4xl mx-auto px-4 py-8">
-    <div class="mb-6"><a href="/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
+    <div class="mb-6"><a href="/admin/patient/${patientId}" class="text-primary-600 hover:text-primary-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar patiënt</a></div>
     <div id="protocol-container"><p class="text-center py-12 text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>Laden...</p></div>
   </main>
   <script>
@@ -1942,7 +1942,7 @@ app.get('/protocol/:patientId/:protocolId', (c) => {
         }
 
         // Action buttons
-        html += '<div class="flex gap-3 mt-6 border-t pt-6"><button onclick="window.print()" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700"><i class="fas fa-print mr-2"></i>Print Protocol</button><a href="/patient/'+patientId+'" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-arrow-left mr-2"></i>Terug naar patiënt</a></div>';
+        html += '<div class="flex gap-3 mt-6 border-t pt-6"><button onclick="window.print()" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700"><i class="fas fa-print mr-2"></i>Print Protocol</button><a href="/admin/patient/'+patientId+'" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-arrow-left mr-2"></i>Terug naar patiënt</a></div>';
 
         html += '</div></div>';
         document.getElementById('protocol-container').innerHTML = html;
@@ -2005,7 +2005,7 @@ const portalHead = `<!DOCTYPE html>
 const portalNav = `
 <nav class="bg-white/95 backdrop-blur-md border-b border-gray-100 sticky top-0 z-50">
   <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-    <a href="/portaal" class="flex items-center gap-3 hover:opacity-80 transition">
+    <a href="/" class="flex items-center gap-3 hover:opacity-80 transition">
       <div class="w-10 h-10 bg-gradient-to-br from-portal-500 to-teal-600 rounded-xl flex items-center justify-center">
         <i class="fas fa-leaf text-white text-lg"></i>
       </div>
@@ -2015,8 +2015,8 @@ const portalNav = `
       </div>
     </a>
     <div class="flex items-center gap-3">
-      <a href="/portaal" class="hidden sm:inline-flex px-3 py-2 rounded-lg hover:bg-gray-100 text-sm text-gray-600 font-medium transition"><i class="fas fa-home mr-1"></i> Home</a>
-      <a href="/portaal/inloggen" class="bg-portal-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-portal-700 transition shadow-sm"><i class="fas fa-sign-in-alt mr-1"></i> Inloggen</a>
+      <a href="/" class="hidden sm:inline-flex px-3 py-2 rounded-lg hover:bg-gray-100 text-sm text-gray-600 font-medium transition"><i class="fas fa-home mr-1"></i> Home</a>
+      <a href="/inloggen" class="bg-portal-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-portal-700 transition shadow-sm"><i class="fas fa-sign-in-alt mr-1"></i> Inloggen</a>
     </div>
   </div>
 </nav>`
@@ -2224,7 +2224,7 @@ app.post('/api/portal/lab-upload', async (c) => {
 // =====================================================
 
 // LANDINGSPAGINA
-app.get('/portaal', (c) => {
+app.get('/', (c) => {
   return c.html(`${portalHead}
 <body class="bg-gray-50 min-h-screen font-sans">
   ${portalNav}
@@ -2249,7 +2249,7 @@ app.get('/portaal', (c) => {
             <strong class="text-white">Stoppen met raden, starten met weten.</strong> Door middel van diepgaande assessments en laboratoriummetingen bepalen we exact wat jouw lichaam nodig heeft.
           </p>
           <div class="flex flex-col sm:flex-row gap-4">
-            <a href="/portaal/inloggen" class="bg-white text-portal-700 px-8 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition text-center shadow-lg hover:shadow-xl">
+            <a href="/inloggen" class="bg-white text-portal-700 px-8 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition text-center shadow-lg hover:shadow-xl">
               <i class="fas fa-arrow-right mr-2"></i>Start mijn analyse
             </a>
             <a href="#waarom" class="border-2 border-white/25 px-8 py-4 rounded-xl font-semibold text-lg hover:bg-white/10 transition text-center">
@@ -2465,7 +2465,7 @@ app.get('/portaal', (c) => {
     <div class="max-w-3xl mx-auto px-4 text-center">
       <h2 class="text-3xl md:text-4xl font-black mb-4">Krijg grip op je biologie</h2>
       <p class="text-white/80 text-lg mb-10 max-w-xl mx-auto">Start vandaag nog met jouw persoonlijke analyse. Heeft u een toegangscode ontvangen van uw therapeut?</p>
-      <a href="/portaal/inloggen" class="bg-white text-portal-700 px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition shadow-lg hover:shadow-xl inline-block">
+      <a href="/inloggen" class="bg-white text-portal-700 px-10 py-4 rounded-xl font-bold text-lg hover:bg-portal-50 transition shadow-lg hover:shadow-xl inline-block">
         <i class="fas fa-arrow-right mr-2"></i>Start mijn analyse
       </a>
       <p class="text-sm text-white/50 mt-6">Nog geen toegangscode? Neem contact op met Fysiopraktijk Zeist.</p>
@@ -2483,7 +2483,7 @@ app.get('/portaal', (c) => {
 })
 
 // INLOG PAGINA
-app.get('/portaal/inloggen', (c) => {
+app.get('/inloggen', (c) => {
   return c.html(`${portalHead}
 <body class="bg-gray-50 min-h-screen">
   ${portalNav}
@@ -2553,7 +2553,7 @@ app.get('/portaal/inloggen', (c) => {
           // Store in sessionStorage
           sessionStorage.setItem('portal_code', code.toUpperCase());
           sessionStorage.setItem('portal_patient', JSON.stringify(data));
-          window.location.href = '/portaal/menu';
+          window.location.href = '/menu';
         } else {
           errDiv.textContent = data.error || 'Ongeldige toegangscode. Controleer de code en probeer opnieuw.';
           errDiv.classList.remove('hidden');
@@ -2572,7 +2572,7 @@ app.get('/portaal/inloggen', (c) => {
 })
 
 // PORTAL MENU (na inloggen)
-app.get('/portaal/menu', (c) => {
+app.get('/menu', (c) => {
   return c.html(`${portalHead}
 <body class="bg-gray-50 min-h-screen">
   ${portalNav}
@@ -2588,7 +2588,7 @@ app.get('/portaal/menu', (c) => {
       
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 fade-in">
         <!-- Vragenlijst -->
-        <a href="/portaal/vragenlijst" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+        <a href="/vragenlijst" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
           <div class="w-16 h-16 bg-blue-100 group-hover:bg-blue-200 rounded-2xl flex items-center justify-center mb-4 transition">
             <i class="fas fa-clipboard-check text-blue-600 text-2xl"></i>
           </div>
@@ -2598,7 +2598,7 @@ app.get('/portaal/menu', (c) => {
         </a>
         
         <!-- Lab Upload -->
-        <a href="/portaal/lab-upload" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+        <a href="/lab-upload" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
           <div class="w-16 h-16 bg-amber-100 group-hover:bg-amber-200 rounded-2xl flex items-center justify-center mb-4 transition">
             <i class="fas fa-file-upload text-amber-600 text-2xl"></i>
           </div>
@@ -2608,7 +2608,7 @@ app.get('/portaal/menu', (c) => {
         </a>
         
         <!-- Disclaimer -->
-        <a href="/portaal#disclaimer" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
+        <a href="/#disclaimer" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
           <div class="w-16 h-16 bg-yellow-100 group-hover:bg-yellow-200 rounded-2xl flex items-center justify-center mb-4 transition">
             <i class="fas fa-exclamation-triangle text-yellow-600 text-2xl"></i>
           </div>
@@ -2634,7 +2634,7 @@ app.get('/portaal/menu', (c) => {
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = sessionStorage.getItem('portal_patient');
     if (!portalCode || !patientInfo) {
-      window.location.href = '/portaal/inloggen';
+      window.location.href = '/inloggen';
     } else {
       const p = JSON.parse(patientInfo);
       document.getElementById('patient-name').textContent = p.first_name + ' ' + p.last_name;
@@ -2643,19 +2643,19 @@ app.get('/portaal/menu', (c) => {
     function logout() {
       sessionStorage.removeItem('portal_code');
       sessionStorage.removeItem('portal_patient');
-      window.location.href = '/portaal';
+      window.location.href = '/';
     }
   </script>
 </body></html>`)
 })
 
 // PORTAL VRAGENLIJST
-app.get('/portaal/vragenlijst', (c) => {
+app.get('/vragenlijst', (c) => {
   return c.html(`${portalHead}
 <body class="bg-gray-50 min-h-screen">
   ${portalNav}
   <main class="max-w-3xl mx-auto px-4 py-8">
-    <div class="mb-6"><a href="/portaal/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
+    <div class="mb-6"><a href="/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
     
     <div id="questionnaire-container" class="bg-white rounded-2xl shadow-lg">
       <div class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white p-6 rounded-t-2xl">
@@ -2691,7 +2691,7 @@ app.get('/portaal/vragenlijst', (c) => {
     // Check login
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
-    if (!portalCode) { window.location.href = '/portaal/inloggen'; }
+    if (!portalCode) { window.location.href = '/inloggen'; }
     
     document.getElementById('patient-greeting').textContent = 'Hallo ' + (patientInfo.first_name || '') + ', vul onderstaande vragen eerlijk in.';
     
@@ -2865,8 +2865,8 @@ app.get('/portaal/vragenlijst', (c) => {
       
       // Actions
       html += '<div class="flex flex-col sm:flex-row gap-4">';
-      html += '<a href="/portaal/menu" class="bg-portal-600 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-portal-700 transition"><i class="fas fa-home mr-2"></i>Terug naar Menu</a>';
-      html += '<a href="/portaal/lab-upload" class="bg-amber-500 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-amber-600 transition"><i class="fas fa-file-upload mr-2"></i>Lab-formulier Uploaden</a>';
+      html += '<a href="/menu" class="bg-portal-600 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-portal-700 transition"><i class="fas fa-home mr-2"></i>Terug naar Menu</a>';
+      html += '<a href="/lab-upload" class="bg-amber-500 text-white px-6 py-3 rounded-xl font-bold text-center hover:bg-amber-600 transition"><i class="fas fa-file-upload mr-2"></i>Lab-formulier Uploaden</a>';
       html += '<button onclick="window.print()" class="border border-gray-300 px-6 py-3 rounded-xl font-medium hover:bg-gray-50 transition"><i class="fas fa-print mr-2"></i>Print</button>';
       html += '</div>';
       
@@ -2881,12 +2881,12 @@ app.get('/portaal/vragenlijst', (c) => {
 })
 
 // PORTAL LAB UPLOAD
-app.get('/portaal/lab-upload', (c) => {
+app.get('/lab-upload', (c) => {
   return c.html(`${portalHead}
 <body class="bg-gray-50 min-h-screen">
   ${portalNav}
   <main class="max-w-2xl mx-auto px-4 py-8">
-    <div class="mb-6"><a href="/portaal/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
+    <div class="mb-6"><a href="/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
     
     <div class="bg-white rounded-2xl shadow-lg overflow-hidden fade-in">
       <div class="bg-gradient-to-r from-amber-500 to-orange-500 text-white p-6">
@@ -2946,7 +2946,7 @@ app.get('/portaal/lab-upload', (c) => {
   <script>
     // Check login
     const portalCode = sessionStorage.getItem('portal_code');
-    if (!portalCode) { window.location.href = '/portaal/inloggen'; }
+    if (!portalCode) { window.location.href = '/inloggen'; }
     
     let selectedFile = null;
     
@@ -3027,7 +3027,7 @@ app.get('/portaal/lab-upload', (c) => {
         
         const resultDiv = document.getElementById('upload-result');
         if (res.ok) {
-          resultDiv.innerHTML = '<div class="bg-green-50 border border-green-200 rounded-xl p-6 text-center"><i class="fas fa-check-circle text-green-500 text-4xl mb-3"></i><p class="font-bold text-green-800 text-lg mb-2">Succesvol verstuurd!</p><p class="text-green-700 text-sm">' + (data.message || 'Uw document is ontvangen.') + '</p><a href="/portaal/menu" class="inline-block mt-4 bg-portal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-portal-700 transition"><i class="fas fa-home mr-1"></i>Terug naar menu</a></div>';
+          resultDiv.innerHTML = '<div class="bg-green-50 border border-green-200 rounded-xl p-6 text-center"><i class="fas fa-check-circle text-green-500 text-4xl mb-3"></i><p class="font-bold text-green-800 text-lg mb-2">Succesvol verstuurd!</p><p class="text-green-700 text-sm">' + (data.message || 'Uw document is ontvangen.') + '</p><a href="/menu" class="inline-block mt-4 bg-portal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-portal-700 transition"><i class="fas fa-home mr-1"></i>Terug naar menu</a></div>';
           resultDiv.classList.remove('hidden');
           document.getElementById('file-preview').classList.add('hidden');
           btn.classList.add('hidden');
