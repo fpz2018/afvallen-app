@@ -884,6 +884,7 @@ const navBar = `
       <a href="/admin" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-home mr-1"></i> Dashboard</a>
       <a href="/admin/patients" class="px-3 py-2 rounded hover:bg-white/10 text-sm"><i class="fas fa-users mr-1"></i> Patiënten</a>
       <a href="/admin/new-patient" class="bg-white text-primary-700 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-primary-50"><i class="fas fa-plus mr-1"></i> Nieuwe Patiënt</a>
+      <a href="/admin/kennisbank" class="px-3 py-2 rounded hover:bg-white/10 text-sm" title="Kennisbank"><i class="fas fa-book-medical mr-1"></i> <span class="hidden lg:inline">Kennisbank</span></a>
       <a href="/admin/beveiliging" class="px-3 py-2 rounded hover:bg-white/10 text-sm" title="Beveiliging"><i class="fas fa-shield-alt"></i></a>
       <button onclick="adminLogout()" class="px-3 py-2 rounded hover:bg-red-500/30 text-sm text-white/70 hover:text-white transition" title="Uitloggen"><i class="fas fa-sign-out-alt"></i></button>
     </div>
@@ -3057,6 +3058,507 @@ app.get('/admin/protocol/:patientId/:protocolId', (c) => {
       }
     }
     loadProtocol();
+  </script>
+</body></html>`)
+})
+
+// =====================================================
+// ADMIN KENNISBANK - Naslagwerk voor therapeut
+// =====================================================
+app.get('/admin/kennisbank', (c) => {
+  return c.html(`${htmlHead}
+<body class="bg-gray-50 min-h-screen">
+  ${navBar}
+  <main class="max-w-6xl mx-auto px-4 py-8">
+    <div class="mb-8">
+      <h2 class="text-2xl font-bold text-gray-800"><i class="fas fa-book-medical mr-2 text-primary-600"></i>Kennisbank</h2>
+      <p class="text-gray-500">Naslagwerk voor de therapeut — Orthomoleculair protocol bij overgewicht</p>
+    </div>
+
+    <!-- NAVIGATIE TABS -->
+    <div class="flex flex-wrap gap-2 mb-8 sticky top-0 bg-gray-50 py-3 z-10 border-b">
+      <button onclick="showSection('intake')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-primary-600 text-white" data-tab="intake"><i class="fas fa-clipboard-list mr-1"></i>Intakevragen</button>
+      <button onclick="showSection('beslisboom')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300" data-tab="beslisboom"><i class="fas fa-project-diagram mr-1"></i>Beslisboom</button>
+      <button onclick="showSection('classificatie')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300" data-tab="classificatie"><i class="fas fa-tags mr-1"></i>Classificatie</button>
+      <button onclick="showSection('labtesten')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300" data-tab="labtesten"><i class="fas fa-flask mr-1"></i>Labtesten</button>
+      <button onclick="showSection('supplementen')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300" data-tab="supplementen"><i class="fas fa-capsules mr-1"></i>Supplementen</button>
+      <button onclick="showSection('medicatie')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300" data-tab="medicatie"><i class="fas fa-pills mr-1"></i>Medicatie</button>
+      <button onclick="showSection('aandoeningen')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300" data-tab="aandoeningen"><i class="fas fa-stethoscope mr-1"></i>Aandoeningen</button>
+      <button onclick="showSection('communicatie')" class="kb-tab px-4 py-2 rounded-lg text-sm font-semibold bg-gray-200 text-gray-700 hover:bg-gray-300" data-tab="communicatie"><i class="fas fa-comments mr-1"></i>Communicatie</button>
+    </div>
+
+    <!-- ===================== SECTIE 1: INTAKEVRAGEN ===================== -->
+    <div id="sec-intake" class="kb-section">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-clipboard-list mr-2"></i>Standaard Intakevragenlijst</h3>
+        <p class="text-gray-600 mb-6">Gebaseerd op de <strong>Check Oorzaken Overgewicht</strong> (Leefstijlcoalitie). Online vooraf invullen door patiënt.</p>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="bg-gray-50"><th class="p-3 text-left font-bold">Categorie</th><th class="p-3 text-left font-bold">Sleutelvragen</th><th class="p-3 text-left font-bold">Wat brengt dit in kaart?</th></tr></thead>
+            <tbody>
+              <tr class="border-t"><td class="p-3 font-semibold text-primary-700">Medische voorgeschiedenis</td><td class="p-3">Welke aandoeningen heeft u? Medicatie? Familieanamnese obesitas/diabetes/schildklier?</td><td class="p-3 text-gray-500">Onderliggende pathologie, medicatie-interacties</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold text-primary-700">Leefstijlfactoren</td><td class="p-3">Hoe is uw eetpatroon? Wie kookt? Eetmomenten? Maaltijdfrequentie?</td><td class="p-3 text-gray-500">Gedragsdeterminanten, sociale omgeving</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold text-primary-700">Bewegingspatroon</td><td class="p-3">Hoeveel beweegt u dagelijks? Welke barrières ervaart u?</td><td class="p-3 text-gray-500">Energiebalans, fysieke mogelijkheden</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold text-primary-700">Psychosociale factoren</td><td class="p-3">Ervaart u stress? Hoe slaapt u? Sociale steun?</td><td class="p-3 text-gray-500">Cortisol, emotioneel eten, adherence</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold text-primary-700">Slaapkwaliteit</td><td class="p-3">Hoeveel uur slaapt u? Slaapapneu-vermoeden? Snurken?</td><td class="p-3 text-gray-500">Leptine/ghreline disbalans</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold text-primary-700">Werk & economie</td><td class="p-3">Werkstatus, financiële situatie, voedselomgeving</td><td class="p-3 text-gray-500">Sociaaleconomische determinanten</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-amber-700"><i class="fas fa-search-plus mr-2"></i>Aanvullende Orthomoleculaire Intakevragen</h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="border rounded-xl p-5">
+            <h4 class="font-bold text-gray-800 mb-3"><i class="fas fa-utensils mr-1 text-amber-500"></i>Voeding & Vertering</h4>
+            <ul class="space-y-2 text-sm text-gray-600">
+              <li>• Welke voedingsmiddelen geeft u de voorkeur? (kwaliteit eiwitten, vetten, vezels)</li>
+              <li>• Hoe is uw stoelgang? (indicatie absorptie/vertering)</li>
+              <li>• Alcohol, koffie, zoetstoffen? (invloed hormonen/mitochondriën)</li>
+              <li>• Specifieke cravings? <span class="text-amber-600 font-medium">Suiker=insuline, Zout=bijnieren, Chocola=magnesium</span></li>
+            </ul>
+          </div>
+          <div class="border rounded-xl p-5">
+            <h4 class="font-bold text-gray-800 mb-3"><i class="fas fa-heartbeat mr-1 text-red-500"></i>Symptomen Screening</h4>
+            <ul class="space-y-2 text-sm text-gray-600">
+              <li>• <strong>Vermoeidheid + koud + droge huid</strong> → Schildklierdisfunctie</li>
+              <li>• <strong>Buikvet + suikerhonger + snel honger</strong> → Insulineresistentie</li>
+              <li>• <strong>Stress + wakker liggen + middagdip 15:00</strong> → Cortisol disbalans</li>
+              <li>• <strong>Spierpijn + statinegebruik</strong> → CoQ10-deficiëntie</li>
+              <li>• <strong>Slaapapneu-vermoeden</strong> → Leptine/ghreline disbalans</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-blue-50 border-2 border-blue-200 rounded-2xl p-6">
+        <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-ruler mr-2"></i>Lichamelijk Onderzoek (altijd bij intake)</h4>
+        <div class="flex flex-wrap gap-4 text-sm">
+          <span class="bg-white px-3 py-1 rounded-lg border">BMI berekenen</span>
+          <span class="bg-white px-3 py-1 rounded-lg border">Buikomvang meten</span>
+          <span class="bg-white px-3 py-1 rounded-lg border">Bloeddruk</span>
+          <span class="bg-white px-3 py-1 rounded-lg border">Vetpercentage (bio-impedantie)</span>
+          <span class="bg-white px-3 py-1 rounded-lg border">Spiermassa</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== SECTIE 2: BESLISBOOM ===================== -->
+    <div id="sec-beslisboom" class="kb-section hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-project-diagram mr-2"></i>Beslisboom: "Waarom valt deze patiënt niet af?"</h3>
+        
+        <div class="bg-gray-900 text-green-400 rounded-xl p-6 font-mono text-sm overflow-x-auto whitespace-pre leading-relaxed">PATIËNT STAGNEERT ONDANKS INSPANNINGEN
+           │
+           ▼
+    Is het een VROUW met specifieke kenmerken?
+    (PCOS, schildklier, menopauze)
+           │
+    ┌──────┴──────┐
+    JA            NEE
+    │             │
+    ▼             ▼
+Screen op:    Is er MEDICATIEgebruik?
+• Schildklier  (statines, antipsychotica,
+• PCOS         insuline, prednison,
+• Oestrogeen   bètablokkers, etc.)
+               │
+        ┌──────┴──────┐
+        JA            NEE
+        │             │
+        ▼             ▼
+   Pas protocol    Is er Slaap/Stress-probleem?
+   aan (medicatie)     │
+               ┌──────┴──────┐
+               JA            NEE
+               │             │
+               ▼             ▼
+          Focus op:       Vermoeden metabole
+          • Cortisol      weerstand / mitochondriële
+          • Slaaphygiëne  disfunctie?
+          • Stressmgmt        │
+                         ┌────┴────┐
+                         JA      NEE
+                         │        │
+                         ▼        ▼
+                    Uitgebreid  Standaard
+                    lab-pakket  protocol</div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-red-700"><i class="fas fa-flag mr-2"></i>Rode Vlaggen voor Metabole Weerstand</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="border-l-4 border-red-500 pl-4 py-2">
+            <p class="font-semibold text-gray-800">Afvallen lukt niet ondanks strikte calorierestrictie</p>
+            <p class="text-sm text-gray-500">Onderliggende blokkade waarschijnlijk</p>
+          </div>
+          <div class="border-l-4 border-red-500 pl-4 py-2">
+            <p class="font-semibold text-gray-800">Gewichtsplateau ondanks inspanningen</p>
+            <p class="text-sm text-gray-500">Metabole adaptatie of hormonale factor</p>
+          </div>
+          <div class="border-l-4 border-red-500 pl-4 py-2">
+            <p class="font-semibold text-gray-800">PCOS-kenmerken</p>
+            <p class="text-sm text-gray-500">Onregelmatige menstruatie, acne, hirsutisme</p>
+          </div>
+          <div class="border-l-4 border-red-500 pl-4 py-2">
+            <p class="font-semibold text-gray-800">Hashimoto/schildklier in voorgeschiedenis</p>
+            <p class="text-sm text-gray-500">Auto-immuun component</p>
+          </div>
+          <div class="border-l-4 border-red-500 pl-4 py-2">
+            <p class="font-semibold text-gray-800">Menopauze-gerelateerd gewichtsplateau</p>
+            <p class="text-sm text-gray-500">Oestrogeendaling → verandering vetdistributie</p>
+          </div>
+          <div class="border-l-4 border-red-500 pl-4 py-2">
+            <p class="font-semibold text-gray-800">Onverklaarde vermoeidheid</p>
+            <p class="text-sm text-gray-500">Niet verklaard door slaapgebrek</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-8">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-list-ol mr-2"></i>Intake Workflow (Stappenplan)</h3>
+        <div class="space-y-4">
+          <div class="flex gap-4 items-start"><div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0"><span class="font-bold text-primary-700">1</span></div><div><p class="font-bold text-gray-800">Voorbereiding</p><p class="text-sm text-gray-600">Patiënt vult online vragenlijst in. Bekijk resultaten vooraf. Noteer rode vlaggen.</p></div></div>
+          <div class="flex gap-4 items-start"><div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0"><span class="font-bold text-primary-700">2</span></div><div><p class="font-bold text-gray-800">Intakegesprek (45-60 min)</p><p class="text-sm text-gray-600">Toestemming & vertrouwen. Besprek resultaten. Orthomoleculaire vragen. Anamnese medicatie. Lichamelijk onderzoek: BMI, buikomvang, bloeddruk.</p></div></div>
+          <div class="flex gap-4 items-start"><div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0"><span class="font-bold text-primary-700">3</span></div><div><p class="font-bold text-gray-800">Screening & Lab</p><p class="text-sm text-gray-600">Basis: TSH, glucose, HbA1c, lipiden, lever, nier. Uitgebreid bij vermoeden metabole weerstand.</p></div></div>
+          <div class="flex gap-4 items-start"><div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0"><span class="font-bold text-primary-700">4</span></div><div><p class="font-bold text-gray-800">Analyse & Plan</p><p class="text-sm text-gray-600">Identificeer dominante factor(en). Stel supplementprotocol op. Formuleer gepersonaliseerd voedings- en bewegingsadvies. Plan vervolgconsult.</p></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== SECTIE 3: CLASSIFICATIE ===================== -->
+    <div id="sec-classificatie" class="kb-section hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-tags mr-2"></i>Dominante Mechanismen bij Metabole Weerstand</h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="border-2 border-red-200 rounded-xl p-5 bg-red-50/30">
+            <h4 class="font-bold text-red-700 mb-2"><i class="fas fa-candy-cane mr-1"></i>Insuline-gedreven</h4>
+            <p class="text-sm text-gray-700 mb-2"><strong>Kenmerken:</strong> Buikvet, suikerhonger, PCOS</p>
+            <p class="text-sm text-gray-700"><strong>Primaire interventie:</strong> Koolhydraatrestrictie, metformine-overleg, myo-inositol</p>
+          </div>
+          <div class="border-2 border-indigo-200 rounded-xl p-5 bg-indigo-50/30">
+            <h4 class="font-bold text-indigo-700 mb-2"><i class="fas fa-moon mr-1"></i>Schildklier-gedreven</h4>
+            <p class="text-sm text-gray-700 mb-2"><strong>Kenmerken:</strong> Koud, moe, droge huid, constipatie</p>
+            <p class="text-sm text-gray-700"><strong>Primaire interventie:</strong> Schildklieroptimalisatie (medicatie, selenium, zink)</p>
+          </div>
+          <div class="border-2 border-orange-200 rounded-xl p-5 bg-orange-50/30">
+            <h4 class="font-bold text-orange-700 mb-2"><i class="fas fa-brain mr-1"></i>Cortisol-gedreven</h4>
+            <p class="text-sm text-gray-700 mb-2"><strong>Kenmerken:</strong> Middagdip, stressbuik, slaapstoornissen</p>
+            <p class="text-sm text-gray-700"><strong>Primaire interventie:</strong> Stressmanagement, fosfatidylserine, adaptogenen</p>
+          </div>
+          <div class="border-2 border-pink-200 rounded-xl p-5 bg-pink-50/30">
+            <h4 class="font-bold text-pink-700 mb-2"><i class="fas fa-venus mr-1"></i>PCOS / Hormonen</h4>
+            <p class="text-sm text-gray-700 mb-2"><strong>Kenmerken:</strong> Onregelmatige cyclus, acne, hirsutisme</p>
+            <p class="text-sm text-gray-700"><strong>Primaire interventie:</strong> Insuline behandelen + inositol + anti-androgeen</p>
+          </div>
+          <div class="border-2 border-blue-200 rounded-xl p-5 bg-blue-50/30">
+            <h4 class="font-bold text-blue-700 mb-2"><i class="fas fa-pills mr-1"></i>Medicatie-gerelateerd</h4>
+            <p class="text-sm text-gray-700 mb-2"><strong>Kenmerken:</strong> Statines, SSRI, bètablokkers, prednison</p>
+            <p class="text-sm text-gray-700"><strong>Primaire interventie:</strong> Nutriëntdepletie compenseren, overleg voorschrijver</p>
+          </div>
+          <div class="border-2 border-gray-200 rounded-xl p-5 bg-gray-50/30">
+            <h4 class="font-bold text-gray-700 mb-2"><i class="fas fa-layer-group mr-1"></i>Multifactorieel</h4>
+            <p class="text-sm text-gray-700 mb-2"><strong>Kenmerken:</strong> Meerdere overlappende signalen</p>
+            <p class="text-sm text-gray-700"><strong>Primaire interventie:</strong> Gepersonaliseerd protocol, integrale aanpak</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-amber-50 border-2 border-amber-200 rounded-2xl p-6">
+        <h4 class="font-bold text-amber-800 mb-3"><i class="fas fa-exclamation-triangle mr-2"></i>Belangrijke Combinaties (Vicieuze Cirkels)</h4>
+        <ul class="space-y-2 text-sm">
+          <li class="flex items-start gap-2"><span class="text-red-500 mt-0.5">●</span><span><strong>Metabole weerstand + Insuline:</strong> Sterk verhoogd risico metabool syndroom</span></li>
+          <li class="flex items-start gap-2"><span class="text-red-500 mt-0.5">●</span><span><strong>Schildklier + Cortisol:</strong> Stress remt T4→T3 conversie (vicieuze cirkel)</span></li>
+          <li class="flex items-start gap-2"><span class="text-red-500 mt-0.5">●</span><span><strong>PCOS + Insuline:</strong> Insuline drijft androgeenproductie → behandel insuline EERST</span></li>
+          <li class="flex items-start gap-2"><span class="text-orange-500 mt-0.5">●</span><span><strong>Slechte slaap + Dagelijkse stress:</strong> Prioriteer stressreductie vóór andere interventies</span></li>
+          <li class="flex items-start gap-2"><span class="text-orange-500 mt-0.5">●</span><span><strong>&gt;1 jaar falen + geen resultaat:</strong> Onderliggende metabole blokkade waarschijnlijk</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ===================== SECTIE 4: LABTESTEN ===================== -->
+    <div id="sec-labtesten" class="kb-section hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-flask mr-2"></i>Basis Bloedpakket (altijd aanvragen)</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="bg-gray-50"><th class="p-3 text-left font-bold">Test</th><th class="p-3 text-left font-bold">Doelwaarden</th><th class="p-3 text-left font-bold">Waarom?</th></tr></thead>
+            <tbody>
+              <tr class="border-t"><td class="p-3 font-semibold">TSH + fT4 + fT3</td><td class="p-3"><code>TSH 0,4-2,5 mU/L</code></td><td class="p-3 text-gray-500">Schildklierfunctie — essentieel bij gewichtsproblematiek</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Glucose (nuchter) + HbA1c</td><td class="p-3"><code>HbA1c &lt; 5,7%</code></td><td class="p-3 text-gray-500">Glucosemetabolisme, diabetes screening</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">Insuline (nuchter) + HOMA-IR</td><td class="p-3"><code>Insuline &lt; 6 mU/L, HOMA &lt; 2,0</code></td><td class="p-3 text-gray-500">Insulineresistentie — vaak verhoogd vóór glucose stijgt</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Lipidenprofiel (Chol, HDL, LDL, TG)</td><td class="p-3"><code>TG/HDL ratio &lt; 2</code></td><td class="p-3 text-gray-500">Cardiovasculair risico, metabool syndroom</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">Leverfunctie (ALAT, ASAT, GGT)</td><td class="p-3"><code>Normaal bereik</code></td><td class="p-3 text-gray-500">Uitsluiten leververvetting (NAFLD)</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Nierfunctie (Creatinine + eGFR)</td><td class="p-3"><code>Normaal bereik</code></td><td class="p-3 text-gray-500">Essentieel bij metabool syndroom</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">Bloedbeeld (Hb, MCV)</td><td class="p-3"><code>Normaal bereik</code></td><td class="p-3 text-gray-500">Anemie screening (ijzer vs B12/folaat)</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Vitamine D (25-OH)</td><td class="p-3"><code>75-125 nmol/L</code></td><td class="p-3 text-gray-500">Tekort versterkt insulineresistentie</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">Ferritine</td><td class="p-3"><code>30-100 µg/L</code></td><td class="p-3 text-gray-500">Laag ferritine = vermoeidheid, belemmert afvallen</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Cortisol (ochtend) + DHEA-S</td><td class="p-3"><code>250-700 nmol/L</code></td><td class="p-3 text-gray-500">Bijnierfunctie, cortisol/DHEA-S ratio</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-amber-700"><i class="fas fa-plus-circle mr-2"></i>Uitgebreid Pakket (bij vermoeden metabole weerstand)</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="bg-amber-50"><th class="p-3 text-left font-bold">Test</th><th class="p-3 text-left font-bold">Indicatie</th><th class="p-3 text-left font-bold">Specifieke situatie</th></tr></thead>
+            <tbody>
+              <tr class="border-t"><td class="p-3 font-semibold">rT3 (reverse T3)</td><td class="p-3">T4-conversieprobleem</td><td class="p-3 text-gray-500">Vermoeidheid, schildkliermedicatie werkt niet goed</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">TPO-antistoffen + Anti-Tg</td><td class="p-3">Hashimoto screening</td><td class="p-3 text-gray-500">Auto-immuun schildklierontsteking</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">Leptine</td><td class="p-3">Leptineresistentie</td><td class="p-3 text-gray-500">Brein registreert geen verzadiging ondanks vetreserves</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Testosteron (vrij) + SHBG + LH/FSH</td><td class="p-3">PCOS / androgeen status</td><td class="p-3 text-gray-500">Hirsutisme, acne, onregelmatige cyclus</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">Progesteron (dag 21)</td><td class="p-3">Ovulatie bevestiging</td><td class="p-3 text-gray-500">Anovulatie is hoofdoorzaak gewichtstoename bij PCOS</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">hs-CRP</td><td class="p-3">Laaggradige ontsteking</td><td class="p-3 text-gray-500">&gt;1,0 mg/L = verhoogd risico</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">Homocysteïne</td><td class="p-3">Methyleringsdefect</td><td class="p-3 text-gray-500">Verhoogd = B12/folaat tekort + cardiovasculair risico</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">IGF-1</td><td class="p-3">Groeihormoon</td><td class="p-3 text-gray-500">Buikvet + verlaagde spiermassa</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold">NMR-lipidenprofiel</td><td class="p-3">Lipiden subfracties</td><td class="p-3 text-gray-500">Cardiovasculair risico bij overgewicht</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-8">
+        <h3 class="text-xl font-bold mb-4 text-emerald-700"><i class="fas fa-microscope mr-2"></i>Ontlastingsonderzoek</h3>
+        <p class="text-gray-600 mb-4">Bij darmklachten / metabole weerstand / auto-immuuncomponent</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="border rounded-xl p-4"><p class="font-semibold">Calprotectine</p><p class="text-sm text-gray-500">Darmontsteking marker. &gt;50 = milde ontsteking, &gt;200 = verwijs MDL</p></div>
+          <div class="border rounded-xl p-4"><p class="font-semibold">Zonuline</p><p class="text-sm text-gray-500">Leaky gut marker. Verhoogd = verhoogde darmpermeabiliteit</p></div>
+          <div class="border rounded-xl p-4"><p class="font-semibold">Pancreas Elastase-1</p><p class="text-sm text-gray-500">Pancreasfunctie. &lt;200 = exocriene insufficiëntie</p></div>
+          <div class="border rounded-xl p-4"><p class="font-semibold">sIgA</p><p class="text-sm text-gray-500">Darmimmuunfunctie. Laag = verminderde mucosale afweer</p></div>
+          <div class="border rounded-xl p-4"><p class="font-semibold">SCFA (korte-keten vetzuren)</p><p class="text-sm text-gray-500">Microbioom-marker. Laag = dysbiose, verminderde vetverbranding</p></div>
+          <div class="border rounded-xl p-4"><p class="font-semibold">Beta-glucuronidase</p><p class="text-sm text-gray-500">Verhoogd = oestrogeenrecirculatie → oestrogeendominantie</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== SECTIE 5: SUPPLEMENTEN ===================== -->
+    <div id="sec-supplementen" class="kb-section hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-capsules mr-2"></i>Supplementprotocollen per Categorie</h3>
+        
+        <div class="space-y-6">
+          <div class="border-2 border-indigo-200 rounded-xl overflow-hidden">
+            <div class="bg-indigo-50 p-4"><h4 class="font-bold text-indigo-700"><i class="fas fa-moon mr-1"></i>Schildklier-gedreven</h4></div>
+            <div class="p-4 text-sm">
+              <table class="w-full"><tbody>
+                <tr class="border-b"><td class="py-2 font-semibold">Selenium (L-selenomethionine)</td><td class="py-2">200 mcg/dag</td><td class="py-2 text-gray-500">T4→T3 conversie, TPO verlaging</td><td class="py-2">6 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Zink bisglycinaat</td><td class="py-2">25 mg/dag</td><td class="py-2 text-gray-500">T3-receptor binding</td><td class="py-2">3 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">L-carnitine</td><td class="py-2">1000-2000 mg/dag</td><td class="py-2 text-gray-500">Ondersteunt T3-transport</td><td class="py-2">3 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Vitamine D3</td><td class="py-2">4000 IE/dag</td><td class="py-2 text-gray-500">Immuunmodulatie bij Hashimoto</td><td class="py-2">3 mnd, retest</td></tr>
+                <tr><td class="py-2 font-semibold">Magnesium citraat</td><td class="py-2">400 mg/dag</td><td class="py-2 text-gray-500">Conversie T4→T3</td><td class="py-2">Doorlopend</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+
+          <div class="border-2 border-red-200 rounded-xl overflow-hidden">
+            <div class="bg-red-50 p-4"><h4 class="font-bold text-red-700"><i class="fas fa-candy-cane mr-1"></i>Insuline-gedreven</h4></div>
+            <div class="p-4 text-sm">
+              <table class="w-full"><tbody>
+                <tr class="border-b"><td class="py-2 font-semibold">Myo-inositol</td><td class="py-2">2x 2000 mg/dag</td><td class="py-2 text-gray-500">Insulinegevoeligheid ↑</td><td class="py-2">6 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Berberine</td><td class="py-2">3x 500 mg/dag</td><td class="py-2 text-gray-500">AMPK activatie, bloedsuiker ↓</td><td class="py-2">3 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Chromium</td><td class="py-2">200-400 mcg/dag</td><td class="py-2 text-gray-500">Bloedsuiker regulatie</td><td class="py-2">3 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Alpha-liponzuur</td><td class="py-2">600 mg/dag</td><td class="py-2 text-gray-500">Antioxidant, insulinegevoeligheid</td><td class="py-2">3 mnd</td></tr>
+                <tr><td class="py-2 font-semibold">Omega-3 (EPA+DHA)</td><td class="py-2">2000 mg/dag</td><td class="py-2 text-gray-500">Triglyceriden ↓</td><td class="py-2">Doorlopend</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+
+          <div class="border-2 border-orange-200 rounded-xl overflow-hidden">
+            <div class="bg-orange-50 p-4"><h4 class="font-bold text-orange-700"><i class="fas fa-brain mr-1"></i>Cortisol-gedreven</h4></div>
+            <div class="p-4 text-sm">
+              <table class="w-full"><tbody>
+                <tr class="border-b"><td class="py-2 font-semibold">Ashwagandha (KSM-66)</td><td class="py-2">2x 300 mg/dag</td><td class="py-2 text-gray-500">Cortisol verlaging</td><td class="py-2">3 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Fosfatidylserine</td><td class="py-2">300 mg/dag</td><td class="py-2 text-gray-500">Cortisol verlaging 's avonds</td><td class="py-2">2 mnd</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Magnesium citraat</td><td class="py-2">400-600 mg/dag</td><td class="py-2 text-gray-500">Ontspanning & slaap</td><td class="py-2">Doorlopend</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Vitamine C</td><td class="py-2">1000 mg/dag</td><td class="py-2 text-gray-500">Bijnierfunctie</td><td class="py-2">Doorlopend</td></tr>
+                <tr><td class="py-2 font-semibold">L-Theanine</td><td class="py-2">200 mg/dag</td><td class="py-2 text-gray-500">Ontspanning zonder slaperigheid</td><td class="py-2">Naar behoefte</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+
+          <div class="border-2 border-blue-200 rounded-xl overflow-hidden">
+            <div class="bg-blue-50 p-4"><h4 class="font-bold text-blue-700"><i class="fas fa-pills mr-1"></i>Medicatie-gerelateerd</h4></div>
+            <div class="p-4 text-sm">
+              <table class="w-full"><tbody>
+                <tr class="border-b"><td class="py-2 font-semibold">Ubiquinol (CoQ10)</td><td class="py-2">200-300 mg/dag</td><td class="py-2 text-gray-500">Bij statinegebruik — ESSENTIEEL</td><td class="py-2">Zolang statine</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Vitamine B12 (methylcobalamine)</td><td class="py-2">1000 mcg/dag</td><td class="py-2 text-gray-500">Bij metformine (25-50% risico depletie)</td><td class="py-2">Zolang metformine</td></tr>
+                <tr class="border-b"><td class="py-2 font-semibold">Folaat (5-MTHF)</td><td class="py-2">400-800 mcg/dag</td><td class="py-2 text-gray-500">Methylering</td><td class="py-2">Doorlopend</td></tr>
+                <tr><td class="py-2 font-semibold">Magnesium citraat</td><td class="py-2">400 mg/dag</td><td class="py-2 text-gray-500">Depletie door PPI, diuretica, metformine</td><td class="py-2">Doorlopend</td></tr>
+              </tbody></table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== SECTIE 6: MEDICATIE ===================== -->
+    <div id="sec-medicatie" class="kb-section hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-pills mr-2"></i>Medicatie-Interacties & Protocollen</h3>
+        
+        <div class="space-y-6">
+          <div class="border-2 border-indigo-200 rounded-xl overflow-hidden">
+            <div class="bg-indigo-50 p-4"><h4 class="font-bold text-indigo-700">Schildkliermedicatie (Levothyroxine / LT4)</h4></div>
+            <div class="p-4 space-y-3 text-sm">
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Timing:</span><span>Nuchtere maag, 30-60 min voor ontbijt OF 's avonds 2+ uur na laatste maaltijd</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Interacties:</span><span class="text-red-600 font-medium">Calcium, ijzer, magnesium, cholestyramine: APART innemen (minimaal 4 uur)</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Monitoring:</span><span>TSH elke 6-12 weken bij dosiswijziging, daarna halfjaarlijks</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Doelwaarden:</span><span>TSH 0,4-2,5 (niet alleen "binnen range"), fT3 in bovenste kwartiel</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Conversieprobleem:</span><span>Bij aanhoudende klachten ondanks medicatie: check fT3, rT3, ratio fT3/rT3</span></div>
+            </div>
+          </div>
+
+          <div class="border-2 border-amber-200 rounded-xl overflow-hidden">
+            <div class="bg-amber-50 p-4"><h4 class="font-bold text-amber-700">Statines (Cholesterol-verlagend)</h4></div>
+            <div class="p-4 space-y-3 text-sm">
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Mechanisme:</span><span>Blokkeren mevalonaatweg → CoQ10-synthese verlaagd</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Symptomen:</span><span>Spierpijn, krachtsverlies, vermoeidheid, gewichtsverlies stagneert</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Suppletie:</span><span class="font-medium text-red-600">Ubiquinol (actieve vorm) 100-300 mg/dag met vetrijke maaltijd</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Timing:</span><span>Apart van statine (bijv. ochtend statine, avond CoQ10)</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Impact gewicht:</span><span>Zonder CoQ10: vermoeidheid → minder bewegen → cirkel is rond</span></div>
+            </div>
+          </div>
+
+          <div class="border-2 border-emerald-200 rounded-xl overflow-hidden">
+            <div class="bg-emerald-50 p-4"><h4 class="font-bold text-emerald-700">Metformine (Bij PCOS / Insulineresistentie)</h4></div>
+            <div class="p-4 space-y-3 text-sm">
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Indicatie:</span><span>PCOS, insulineresistentie, prediabetes, gewichtsplateau ondanks dieet</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Opbouw:</span><span class="font-medium">Start 500 mg 1x/dag → langzaam opbouwen naar 1500-2000 mg/dag</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Bijwerkingen:</span><span>GI-klachten (nausea, diarree) → opbouwen essentieel!</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Nutriënten:</span><span class="text-red-600 font-medium">B12 jaarlijks controleren (25-50% risico depletie)</span></div>
+              <div class="flex gap-3"><span class="font-semibold text-gray-700 w-32 flex-shrink-0">Combinatie:</span><span>Ideaal met myo-inositol + koolhydraatrestrictie</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== SECTIE 7: AANDOENINGEN ===================== -->
+    <div id="sec-aandoeningen" class="kb-section hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-stethoscope mr-2"></i>Aandoening-specifieke Protocollen</h3>
+        
+        <div class="space-y-6">
+          <div class="border rounded-xl overflow-hidden">
+            <div class="bg-indigo-600 text-white p-4"><h4 class="font-bold">Hashimoto / Hypothyreoïdie — Stappenplan</h4></div>
+            <div class="p-5">
+              <div class="space-y-3">
+                <div class="flex gap-3 items-start"><span class="bg-indigo-100 text-indigo-700 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm">1</span><div><p class="font-semibold">Screening</p><p class="text-sm text-gray-600">TSH, fT4, fT3, TPO bij elke patiënt met gewichtsproblemen + vermoeidheid/kouwelijkheid</p></div></div>
+                <div class="flex gap-3 items-start"><span class="bg-indigo-100 text-indigo-700 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm">2</span><div><p class="font-semibold">Medische behandeling</p><p class="text-sm text-gray-600">Levothyroxine instellen (1,6 µg/kg) → huisarts/internist</p></div></div>
+                <div class="flex gap-3 items-start"><span class="bg-indigo-100 text-indigo-700 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm">3</span><div><p class="font-semibold">Orthomoleculaire ondersteuning</p><p class="text-sm text-gray-600">Selenium 200mcg, zink 25mg, L-carnitine, vitamine D, magnesium</p></div></div>
+                <div class="flex gap-3 items-start"><span class="bg-indigo-100 text-indigo-700 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm">4</span><div><p class="font-semibold">Dieetinterventies</p><p class="text-sm text-gray-600"><span class="text-red-600 font-medium">Glutenvrij proberen bij TPO+</span>, jodiumbewust, eiwitrijk</p></div></div>
+                <div class="flex gap-3 items-start"><span class="bg-indigo-100 text-indigo-700 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm">5</span><div><p class="font-semibold">Monitoring</p><p class="text-sm text-gray-600">TSH/fT3 elke 6-12 weken, symptoomtracking. Gewichtsverlies gaat trager → realistische verwachtingen!</p></div></div>
+              </div>
+              <div class="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm"><i class="fas fa-lightbulb text-amber-600 mr-1"></i><strong>Let op:</strong> Hashimoto is auto-immuun → ontstekingsremmende leefstijl essentieel (omega-3, curcumine, stressmanagement). Eiwitrijk dieet op maat van schildklierfunctie.</div>
+            </div>
+          </div>
+
+          <div class="border rounded-xl overflow-hidden">
+            <div class="bg-pink-600 text-white p-4"><h4 class="font-bold">PCOS — Integraal Protocol</h4></div>
+            <div class="p-5">
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead><tr class="bg-pink-50"><th class="p-3 text-left font-bold">Domein</th><th class="p-3 text-left font-bold">Interventie</th><th class="p-3 text-left font-bold">Doel</th></tr></thead>
+                  <tbody>
+                    <tr class="border-t"><td class="p-3 font-semibold">Insuline</td><td class="p-3">Metformine + myo-inositol + koolhydraatmodulatie</td><td class="p-3 text-gray-500">Insulinegevoeligheid ↑, ovulatieherstel</td></tr>
+                    <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Androgenen</td><td class="p-3">Spearmuntthee, inositol, evt. anti-androgenen (huisarts)</td><td class="p-3 text-gray-500">Acne ↓, hirsutisme ↓</td></tr>
+                    <tr class="border-t"><td class="p-3 font-semibold">Cyclus</td><td class="p-3">Inositol, gewichtsverlies, stressmanagement</td><td class="p-3 text-gray-500">Reguliere menstruatie, vruchtbaarheid</td></tr>
+                    <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Gewicht</td><td class="p-3">Eiwitrijk, vezels, krachttraining, HIIT</td><td class="p-3 text-gray-500">Lichaamssamenstelling, metabolisme</td></tr>
+                    <tr class="border-t"><td class="p-3 font-semibold">Suppletie</td><td class="p-3">Inositol 2000-4000mg, omega-3, vit D, chromium, zink</td><td class="p-3 text-gray-500">Multiple mechanismen</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="border rounded-xl overflow-hidden">
+            <div class="bg-gray-600 text-white p-4"><h4 class="font-bold">Overige Aandoeningen — Snelreferentie</h4></div>
+            <div class="p-5">
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead><tr class="bg-gray-50"><th class="p-3 text-left font-bold">Aandoening</th><th class="p-3 text-left font-bold">Impact op gewichtsverlies</th><th class="p-3 text-left font-bold">Aanpak</th></tr></thead>
+                  <tbody>
+                    <tr class="border-t"><td class="p-3 font-semibold">Cushing</td><td class="p-3">Cortisol-gedreven buikvet</td><td class="p-3 text-gray-500">Verwijzen endocrinoloog</td></tr>
+                    <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Slaapapneu</td><td class="p-3">Leptineresistentie door slaapfragmentatie</td><td class="p-3 text-gray-500">Verwijzen polisomnografie, CPAP</td></tr>
+                    <tr class="border-t"><td class="p-3 font-semibold">Depressie / SSRI</td><td class="p-3">Gewichtstoename als bijwerking</td><td class="p-3 text-gray-500">Samenwerking psychiater</td></tr>
+                    <tr class="border-t bg-gray-50"><td class="p-3 font-semibold">Hypopituitarism</td><td class="p-3">GH-deficiëntie → minder spiermassa</td><td class="p-3 text-gray-500">Verwijzen endocrinoloog</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== SECTIE 8: COMMUNICATIE ===================== -->
+    <div id="sec-communicatie" class="kb-section hidden">
+      <div class="bg-white rounded-2xl shadow-lg p-8 mb-6">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-comments mr-2"></i>Patiëntcommunicatie</h3>
+        
+        <div class="space-y-6">
+          <div class="border-2 border-emerald-200 rounded-xl p-6">
+            <h4 class="font-bold text-emerald-700 mb-3"><i class="fas fa-quote-left mr-1"></i>"Het Plateau Gesprek"</h4>
+            <p class="text-gray-600 mb-4">Wanneer patiënten vastlopen — de juiste boodschap:</p>
+            <blockquote class="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-r-xl italic text-gray-700">
+              "We hebben uw situatie geanalyseerd en zien dat uw lichaam op dit moment niet optimaal reageert op de standaard aanpak. Dit is <strong>niet</strong> uw schuld en <strong>niet</strong> een kwestie van 'meer wilskracht'. Er spelen biologische factoren mee die we moeten onderzoeken en behandelen. Samen kijken we naar [specifieke factor] en stellen een gericht plan op."
+            </blockquote>
+          </div>
+
+          <div class="border-2 border-blue-200 rounded-xl p-6">
+            <h4 class="font-bold text-blue-700 mb-3"><i class="fas fa-car mr-1"></i>De "Handrem-metafoor"</h4>
+            <blockquote class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-r-xl italic text-gray-700">
+              "Stel dat uw lichaam een auto is die op het moment met de handrem erop rijdt. Wij gaan die handrem eraf halen, zodat u weer normaal kunt rijden. Pas daarna kunnen we kijken naar hoe we de motor optimaliseren."
+            </blockquote>
+          </div>
+
+          <div class="border-2 border-amber-200 rounded-xl p-6">
+            <h4 class="font-bold text-amber-700 mb-3"><i class="fas fa-file-alt mr-1"></i>Patiëntenmateriaal (te ontwikkelen)</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div class="flex items-center gap-2"><i class="fas fa-check-circle text-green-500"></i><span>Eetdagboek-template</span></div>
+              <div class="flex items-center gap-2"><i class="fas fa-check-circle text-green-500"></i><span>Slaaphygiëne-checklist</span></div>
+              <div class="flex items-center gap-2"><i class="fas fa-check-circle text-green-500"></i><span>Stressmanagement-tips</span></div>
+              <div class="flex items-center gap-2"><i class="fas fa-check-circle text-green-500"></i><span>Supplement-overzicht per type</span></div>
+              <div class="flex items-center gap-2"><i class="fas fa-check-circle text-green-500"></i><span>Recepten-voorbeelden</span></div>
+              <div class="flex items-center gap-2"><i class="fas fa-check-circle text-green-500"></i><span>Uitleg labuitslagen voor patiënt</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-lg p-8">
+        <h3 class="text-xl font-bold mb-4 text-primary-700"><i class="fas fa-calendar-check mr-2"></i>Follow-up Schema</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="bg-gray-50"><th class="p-3 text-left font-bold">Tijdstip</th><th class="p-3 text-left font-bold">Focus</th><th class="p-3 text-left font-bold">Acties</th></tr></thead>
+            <tbody>
+              <tr class="border-t"><td class="p-3 font-semibold text-primary-700">2 weken</td><td class="p-3">Adherence, bijwerkingen</td><td class="p-3 text-gray-500">Check supplementen, eetpatroon, ervaringen</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold text-primary-700">6-8 weken</td><td class="p-3">Eerste resultaten</td><td class="p-3 text-gray-500">Wegen, meten, eventueel lab (schildklier, glucose)</td></tr>
+              <tr class="border-t"><td class="p-3 font-semibold text-primary-700">3 maanden</td><td class="p-3">Evaluatie protocol</td><td class="p-3 text-gray-500">Gewicht, lichaamssamenstelling, labwaarden, symptomen</td></tr>
+              <tr class="border-t bg-gray-50"><td class="p-3 font-semibold text-primary-700">6 maanden</td><td class="p-3">Langetermijn</td><td class="p-3 text-gray-500">Duurzaamheid, onderhoud, eventueel doseringen aanpassen</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    function showSection(id) {
+      document.querySelectorAll('.kb-section').forEach(s => s.classList.add('hidden'));
+      document.querySelectorAll('.kb-tab').forEach(t => { t.classList.remove('bg-primary-600','text-white'); t.classList.add('bg-gray-200','text-gray-700'); });
+      document.getElementById('sec-'+id).classList.remove('hidden');
+      const activeTab = document.querySelector('[data-tab="'+id+'"]');
+      if (activeTab) { activeTab.classList.remove('bg-gray-200','text-gray-700'); activeTab.classList.add('bg-primary-600','text-white'); }
+      window.scrollTo({ top: 200, behavior: 'smooth' });
+    }
   </script>
 </body></html>`)
 })
