@@ -3458,6 +3458,55 @@ app.post('/api/portal/generate-code', async (c) => {
   return c.json({ code, patient_id })
 })
 
+// Code vergeten — opzoeken via e-mailadres
+app.post('/api/portal/forgot-code', async (c) => {
+  const db = getSupabase(getEnv(c))
+  const { email } = await c.req.json()
+
+  if (!email?.trim()) {
+    return c.json({ error: 'Vul je e-mailadres in.' }, 400)
+  }
+
+  const cleanEmail = email.trim().toLowerCase()
+
+  // Zoek patiënt op e-mail
+  const { data: patient } = await db
+    .from('patients')
+    .select('id, first_name, portal_code')
+    .eq('email', cleanEmail)
+    .eq('status', 'active')
+    .single()
+
+  if (!patient) {
+    // Bewust vaag om geen info te lekken over welke emails bestaan
+    return c.json({ 
+      success: true, 
+      message: 'Als dit e-mailadres bij ons bekend is, wordt de toegangscode getoond.' 
+    })
+  }
+
+  // Als er geen code is, genereer er een
+  let code = patient.portal_code
+  if (!code) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    code = ''
+    for (let i = 0; i < 8; i++) code += chars.charAt(Math.floor(Math.random() * chars.length))
+    
+    await db.from('patients').update({ 
+      portal_code: code, 
+      portal_code_created_at: new Date().toISOString() 
+    }).eq('id', patient.id)
+  }
+
+  return c.json({ 
+    success: true,
+    found: true,
+    code,
+    first_name: patient.first_name,
+    message: 'Toegangscode gevonden!'
+  })
+})
+
 app.post('/api/portal/verify-code', async (c) => {
   const db = getSupabase(getEnv(c))
   const { code } = await c.req.json()
@@ -4418,9 +4467,14 @@ app.get('/inloggen', (c) => {
       
       <div id="login-error" class="hidden mt-4 bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm"></div>
       
-      <div class="mt-6 pt-6 border-t text-center">
-        <p class="text-sm text-gray-400">Nog geen toegangscode?</p>
-        <a href="/aanmelden" class="text-sm text-portal-600 font-semibold hover:text-portal-700 mt-1 inline-block"><i class="fas fa-user-plus mr-1"></i>Gratis aanmelden</a>
+      <div class="mt-6 pt-6 border-t text-center space-y-3">
+        <div>
+          <a href="/code-vergeten" class="text-sm text-amber-600 font-semibold hover:text-amber-700 inline-block"><i class="fas fa-question-circle mr-1"></i>Code vergeten?</a>
+        </div>
+        <div>
+          <p class="text-sm text-gray-400">Nog geen toegangscode?</p>
+          <a href="/aanmelden" class="text-sm text-portal-600 font-semibold hover:text-portal-700 mt-1 inline-block"><i class="fas fa-user-plus mr-1"></i>Gratis aanmelden</a>
+        </div>
       </div>
     </div>
   </main>
@@ -4465,6 +4519,127 @@ app.get('/inloggen', (c) => {
         errDiv.classList.remove('hidden');
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-sign-in-alt mr-2"></i>Inloggen';
+      }
+    });
+  </script>
+</body></html>`)
+})
+
+// CODE VERGETEN PAGINA
+app.get('/code-vergeten', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-md mx-auto px-4 py-16">
+    <div class="bg-white rounded-2xl shadow-lg p-8 fade-in">
+      <div class="text-center mb-8">
+        <div class="w-20 h-20 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <i class="fas fa-envelope-open-text text-amber-600 text-3xl"></i>
+        </div>
+        <h2 class="text-2xl font-black text-gray-800">Code vergeten?</h2>
+        <p class="text-gray-500 mt-2">Geen probleem! Vul het e-mailadres in waarmee u zich heeft aangemeld en we tonen uw toegangscode.</p>
+      </div>
+      
+      <!-- Stap 1: Email invoeren -->
+      <div id="step-email">
+        <form id="forgot-form" class="space-y-6">
+          <div>
+            <label class="block text-sm font-bold text-gray-700 mb-2"><i class="fas fa-envelope mr-1 text-gray-400"></i>Uw e-mailadres</label>
+            <input 
+              id="email-input"
+              type="email" 
+              placeholder="uw.naam@voorbeeld.nl"
+              class="w-full border-2 border-gray-200 rounded-xl px-5 py-4 text-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 transition"
+              autocomplete="email"
+              required
+            >
+          </div>
+          <button type="submit" id="forgot-btn" class="w-full bg-amber-500 text-white py-4 rounded-xl font-bold text-lg hover:bg-amber-600 transition">
+            <i class="fas fa-search mr-2"></i>Code opzoeken
+          </button>
+        </form>
+        <div id="forgot-error" class="hidden mt-4 bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm"></div>
+      </div>
+
+      <!-- Stap 2: Code tonen -->
+      <div id="step-result" class="hidden">
+        <div class="bg-green-50 border-2 border-green-200 rounded-2xl p-6 text-center mb-6">
+          <i class="fas fa-check-circle text-green-500 text-4xl mb-3"></i>
+          <p class="text-green-800 font-semibold mb-1" id="result-greeting"></p>
+          <p class="text-green-700 text-sm mb-4">Hier is uw persoonlijke toegangscode:</p>
+          <div class="bg-white rounded-xl p-6 border-2 border-green-300 shadow-sm">
+            <p id="result-code" class="text-4xl font-mono font-black tracking-[0.3em] text-gray-800"></p>
+          </div>
+          <p class="text-xs text-green-600 mt-3"><i class="fas fa-lock mr-1"></i>Bewaar deze code goed — u heeft hem nodig om in te loggen.</p>
+        </div>
+        <a href="/inloggen" class="block w-full bg-portal-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-portal-700 transition text-center">
+          <i class="fas fa-sign-in-alt mr-2"></i>Nu inloggen
+        </a>
+      </div>
+
+      <!-- Niet gevonden -->
+      <div id="step-notfound" class="hidden">
+        <div class="bg-amber-50 border-2 border-amber-200 rounded-2xl p-6 text-center mb-6">
+          <i class="fas fa-info-circle text-amber-500 text-4xl mb-3"></i>
+          <p class="text-amber-800 font-semibold mb-2">Geen account gevonden</p>
+          <p class="text-amber-700 text-sm">We konden geen account vinden met dit e-mailadres. Mogelijk heeft u zich met een ander adres aangemeld.</p>
+        </div>
+        <div class="space-y-3">
+          <button onclick="document.getElementById('step-notfound').classList.add('hidden'); document.getElementById('step-email').classList.remove('hidden');" class="block w-full bg-amber-500 text-white py-3 rounded-xl font-bold hover:bg-amber-600 transition text-center">
+            <i class="fas fa-redo mr-2"></i>Ander e-mailadres proberen
+          </button>
+          <a href="/aanmelden" class="block w-full bg-portal-600 text-white py-3 rounded-xl font-bold hover:bg-portal-700 transition text-center">
+            <i class="fas fa-user-plus mr-2"></i>Nieuw account aanmaken
+          </a>
+        </div>
+      </div>
+      
+      <div class="mt-6 pt-6 border-t text-center">
+        <a href="/inloggen" class="text-sm text-gray-400 hover:text-gray-600"><i class="fas fa-arrow-left mr-1"></i>Terug naar inloggen</a>
+      </div>
+    </div>
+  </main>
+  <script>
+    document.getElementById('forgot-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email-input').value.trim();
+      const btn = document.getElementById('forgot-btn');
+      const errDiv = document.getElementById('forgot-error');
+      
+      if (!email) {
+        errDiv.textContent = 'Vul uw e-mailadres in.';
+        errDiv.classList.remove('hidden');
+        return;
+      }
+      
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Zoeken...';
+      errDiv.classList.add('hidden');
+      
+      try {
+        const res = await fetch('/api/portal/forgot-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+        
+        if (data.found) {
+          // Code gevonden — toon resultaat
+          document.getElementById('result-greeting').textContent = 'Welkom terug, ' + data.first_name + '!';
+          document.getElementById('result-code').textContent = data.code;
+          document.getElementById('step-email').classList.add('hidden');
+          document.getElementById('step-result').classList.remove('hidden');
+        } else {
+          // Niet gevonden
+          document.getElementById('step-email').classList.add('hidden');
+          document.getElementById('step-notfound').classList.remove('hidden');
+        }
+      } catch(err) {
+        errDiv.textContent = 'Verbindingsfout. Probeer het later opnieuw.';
+        errDiv.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-search mr-2"></i>Code opzoeken';
       }
     });
   </script>
