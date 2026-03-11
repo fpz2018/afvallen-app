@@ -244,6 +244,88 @@ app.post('/api/admin/login', async (c) => {
   return c.json({ success: true, email: data.user?.email, has_2fa: false })
 })
 
+// Wachtwoord vergeten — stuur reset-email via Supabase Auth
+app.post('/api/admin/reset-password', async (c) => {
+  const ip = getClientIP(c)
+  const rateCheck = checkRateLimit(ip)
+  if (!rateCheck.allowed) {
+    return c.json({ error: `Te veel pogingen. Wacht ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`, blocked: true }, 429)
+  }
+
+  const { email } = await c.req.json()
+  if (!email) {
+    return c.json({ error: 'Vul je e-mailadres in' }, 400)
+  }
+
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
+
+  try {
+    // Determine the redirect URL based on request origin
+    const origin = c.req.header('origin') || c.req.header('referer')?.replace(/\/[^/]*$/, '') || ''
+    const redirectTo = origin ? `${origin}/admin/reset-wachtwoord` : 'https://afvallen.netlify.app/admin/reset-wachtwoord'
+
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'apikey': SUPABASE_ANON_KEY 
+      },
+      body: JSON.stringify({ 
+        email,
+        gotrue_meta_security: { captcha_token: '' }
+      })
+    })
+
+    // Always return success to prevent email enumeration
+    return c.json({ 
+      success: true, 
+      message: 'Als dit e-mailadres bekend is, ontvangt u binnen enkele minuten een e-mail met een link om uw wachtwoord te resetten.' 
+    })
+  } catch (err) {
+    console.error('Password reset error:', err)
+    return c.json({ 
+      success: true, 
+      message: 'Als dit e-mailadres bekend is, ontvangt u binnen enkele minuten een e-mail met een link om uw wachtwoord te resetten.' 
+    })
+  }
+})
+
+// Wachtwoord updaten met recovery token
+app.post('/api/admin/update-password', async (c) => {
+  const { access_token, new_password } = await c.req.json()
+  if (!access_token || !new_password) {
+    return c.json({ error: 'Token en nieuw wachtwoord zijn verplicht' }, 400)
+  }
+  if (new_password.length < 8) {
+    return c.json({ error: 'Wachtwoord moet minimaal 8 tekens bevatten' }, 400)
+  }
+
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
+
+  try {
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      method: 'PUT',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${access_token}`
+      },
+      body: JSON.stringify({ password: new_password })
+    })
+
+    const data = await response.json() as any
+
+    if (!response.ok) {
+      return c.json({ error: data.msg || data.message || 'Wachtwoord resetten mislukt. Probeer opnieuw of vraag een nieuwe link aan.' }, 400)
+    }
+
+    return c.json({ success: true, message: 'Wachtwoord succesvol gewijzigd! U kunt nu inloggen.' })
+  } catch (err) {
+    console.error('Update password error:', err)
+    return c.json({ error: 'Er ging iets mis. Probeer opnieuw.' }, 500)
+  }
+})
+
 // Login stap 2: 2FA verificatie
 app.post('/api/admin/verify-2fa', async (c) => {
   const ip = getClientIP(c)
@@ -403,7 +485,7 @@ function requireAdminSession(c: any): boolean {
 
 // Bescherm admin pagina's (redirect naar login)
 app.use('/admin/*', async (c, next) => {
-  if (c.req.path === '/admin/login') return next()
+  if (c.req.path === '/admin/login' || c.req.path === '/admin/reset-wachtwoord') return next()
   
   if (!requireAdminSession(c)) {
     deleteCookie(c, 'admin_session', { path: '/' })
@@ -429,6 +511,8 @@ app.use('/api/*', async (c, next) => {
   if (path.startsWith('/api/admin/login') ||
       path.startsWith('/api/admin/verify-2fa') ||
       path.startsWith('/api/admin/logout') ||
+      path.startsWith('/api/admin/reset-password') ||
+      path.startsWith('/api/admin/update-password') ||
       path.startsWith('/api/portal/') ||
       path.startsWith('/api/payments/')) {
     return next()
@@ -899,6 +983,150 @@ async function adminLogout() {
 </script>`
 
 // ADMIN LOGIN PAGE
+// WACHTWOORD RESETTEN PAGINA
+app.get('/admin/reset-wachtwoord', (c) => {
+  return c.html(`<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wachtwoord Resetten - Admin</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: {
+        primary: { 50:'#f5f3ff',100:'#ede9fe',200:'#ddd6fe',300:'#c4b5fd',400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9',800:'#5b21b6',900:'#4c1d95' }
+      }}}
+    }
+  </script>
+</head>
+<body class="bg-gradient-to-br from-primary-900 via-primary-800 to-indigo-900 min-h-screen flex items-center justify-center px-4">
+  <div class="w-full max-w-md">
+    <div class="text-center mb-8">
+      <div class="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur border border-white/10">
+        <i class="fas fa-key text-white text-2xl"></i>
+      </div>
+      <h1 class="text-2xl font-bold text-white">Wachtwoord Resetten</h1>
+      <p class="text-white/60 text-sm mt-1">Kies een nieuw wachtwoord voor uw admin-account</p>
+    </div>
+    
+    <div class="bg-white rounded-2xl shadow-2xl p-8">
+      <div id="error-msg" class="hidden bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+        <p class="text-red-700 text-sm font-medium"><i class="fas fa-exclamation-circle mr-1"></i><span id="error-text"></span></p>
+      </div>
+
+      <div id="success-msg" class="hidden bg-green-50 border border-green-200 rounded-xl p-4 mb-6 text-center">
+        <i class="fas fa-check-circle text-green-500 text-3xl mb-2"></i>
+        <p class="text-green-700 font-bold text-lg">Wachtwoord gewijzigd!</p>
+        <p class="text-green-600 text-sm mt-1">U kunt nu inloggen met uw nieuwe wachtwoord.</p>
+        <a href="/admin/login" class="inline-block mt-4 bg-primary-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-primary-700 transition">
+          <i class="fas fa-sign-in-alt mr-1"></i>Naar inloggen
+        </a>
+      </div>
+
+      <div id="reset-fields">
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-lock mr-1 text-gray-400"></i>Nieuw wachtwoord</label>
+          <input type="password" id="new-password" required minlength="8"
+            class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition text-gray-800"
+            placeholder="Minimaal 8 tekens">
+        </div>
+
+        <div class="mb-6">
+          <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-lock mr-1 text-gray-400"></i>Bevestig wachtwoord</label>
+          <input type="password" id="confirm-password" required minlength="8"
+            class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition text-gray-800"
+            placeholder="Herhaal wachtwoord">
+        </div>
+
+        <button type="button" id="save-btn" onclick="handleUpdatePassword()"
+          class="w-full bg-primary-600 text-white py-3.5 rounded-xl font-bold text-base hover:bg-primary-700 transition shadow-lg shadow-primary-200 flex items-center justify-center gap-2">
+          <i class="fas fa-save"></i>
+          <span>Wachtwoord opslaan</span>
+        </button>
+      </div>
+
+      <div class="mt-6 pt-5 border-t text-center">
+        <a href="/admin/login" class="text-sm text-gray-400 hover:text-primary-600 transition">
+          <i class="fas fa-arrow-left mr-1"></i>Terug naar inloggen
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Parse het access_token uit de URL hash (Supabase redirect)
+    // Supabase stuurt: #access_token=...&type=recovery&...
+    let accessToken = null;
+
+    function parseHashParams() {
+      const hash = window.location.hash.substring(1);
+      const params = new URLSearchParams(hash);
+      return params;
+    }
+
+    const params = parseHashParams();
+    accessToken = params.get('access_token');
+    const tokenType = params.get('type');
+
+    if (!accessToken) {
+      // Geen token in URL — mogelijk directe navigatie
+      document.getElementById('error-text').textContent = 'Geen geldige reset-link gevonden. Vraag een nieuwe reset-link aan via de inlogpagina.';
+      document.getElementById('error-msg').classList.remove('hidden');
+      document.getElementById('reset-fields').classList.add('hidden');
+    }
+
+    function showError(msg) {
+      document.getElementById('error-text').textContent = msg;
+      document.getElementById('error-msg').classList.remove('hidden');
+    }
+
+    async function handleUpdatePassword() {
+      document.getElementById('error-msg').classList.add('hidden');
+      
+      const newPw = document.getElementById('new-password').value;
+      const confirmPw = document.getElementById('confirm-password').value;
+
+      if (!newPw || newPw.length < 8) { showError('Wachtwoord moet minimaal 8 tekens bevatten'); return; }
+      if (newPw !== confirmPw) { showError('Wachtwoorden komen niet overeen'); return; }
+
+      const btn = document.getElementById('save-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Opslaan...</span>';
+
+      try {
+        const res = await fetch('/api/admin/update-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_token: accessToken, new_password: newPw })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          document.getElementById('reset-fields').classList.add('hidden');
+          document.getElementById('error-msg').classList.add('hidden');
+          document.getElementById('success-msg').classList.remove('hidden');
+        } else {
+          showError(data.error || 'Er ging iets mis. Vraag een nieuwe reset-link aan.');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-save"></i><span>Wachtwoord opslaan</span>';
+        }
+      } catch(e) {
+        showError('Verbindingsfout. Probeer opnieuw.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-save"></i><span>Wachtwoord opslaan</span>';
+      }
+    }
+
+    // Enter-toets ondersteuning
+    document.getElementById('confirm-password')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleUpdatePassword();
+    });
+  </script>
+</body></html>`)
+})
+
 app.get('/admin/login', (c) => {
   return c.html(`<!DOCTYPE html>
 <html lang="nl">
@@ -963,6 +1191,38 @@ app.get('/admin/login', (c) => {
         </button>
       </form>
 
+      <!-- Wachtwoord vergeten formulier (verborgen) -->
+      <div id="reset-form" class="hidden">
+        <div class="text-center mb-6">
+          <div class="w-14 h-14 bg-amber-100 rounded-xl flex items-center justify-center mx-auto mb-3">
+            <i class="fas fa-envelope text-amber-600 text-xl"></i>
+          </div>
+          <h3 class="text-lg font-bold text-gray-800">Wachtwoord vergeten?</h3>
+          <p class="text-sm text-gray-500 mt-1">Vul je e-mailadres in en we sturen een reset-link</p>
+        </div>
+
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-envelope mr-1 text-gray-400"></i>Email</label>
+          <input type="email" id="reset-email" required
+            class="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition text-gray-800"
+            placeholder="marc@fysiopraktijkzeist.nl">
+        </div>
+
+        <div id="reset-success" class="hidden bg-green-50 border border-green-200 rounded-xl p-4 mb-4">
+          <p class="text-green-700 text-sm font-medium"><i class="fas fa-check-circle mr-1"></i><span id="reset-success-text"></span></p>
+        </div>
+
+        <button type="button" id="reset-btn" onclick="handleResetPassword()"
+          class="w-full bg-amber-500 text-white py-3.5 rounded-xl font-bold text-base hover:bg-amber-600 transition shadow-lg shadow-amber-200 flex items-center justify-center gap-2">
+          <i class="fas fa-paper-plane"></i>
+          <span>Verstuur reset-link</span>
+        </button>
+
+        <button type="button" onclick="backToLoginFromReset()" class="w-full mt-3 py-2.5 text-sm text-gray-500 hover:text-primary-600 transition">
+          <i class="fas fa-arrow-left mr-1"></i>Terug naar inloggen
+        </button>
+      </div>
+
       <!-- Stap 2: 2FA Verificatie (verborgen tot nodig) -->
       <div id="totp-form" class="hidden">
         <div class="text-center mb-6">
@@ -996,8 +1256,11 @@ app.get('/admin/login', (c) => {
         </button>
       </div>
 
-      <div class="mt-6 pt-5 border-t text-center">
-        <a href="/" class="text-sm text-gray-400 hover:text-primary-600 transition">
+      <div class="mt-6 pt-5 border-t text-center space-y-2">
+        <button onclick="showResetForm()" class="text-sm text-primary-600 hover:text-primary-800 font-medium transition block mx-auto">
+          <i class="fas fa-key mr-1"></i>Wachtwoord vergeten?
+        </button>
+        <a href="/" class="text-sm text-gray-400 hover:text-primary-600 transition block">
           <i class="fas fa-arrow-left mr-1"></i>Terug naar portaal
         </a>
       </div>
@@ -1071,6 +1334,61 @@ app.get('/admin/login', (c) => {
         else if (all[pasted.length]) all[pasted.length].focus();
       });
     });
+
+    function showResetForm() {
+      document.getElementById('login-form').classList.add('hidden');
+      document.getElementById('totp-form').classList.add('hidden');
+      document.getElementById('reset-form').classList.remove('hidden');
+      document.getElementById('reset-success').classList.add('hidden');
+      hideError();
+      document.getElementById('reset-email').value = document.getElementById('email').value || '';
+      document.getElementById('reset-email').focus();
+    }
+
+    function backToLoginFromReset() {
+      document.getElementById('reset-form').classList.add('hidden');
+      document.getElementById('login-form').classList.remove('hidden');
+      document.getElementById('reset-success').classList.add('hidden');
+      hideError();
+      const btn = document.getElementById('login-btn');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-sign-in-alt"></i><span>Inloggen</span>';
+    }
+
+    async function handleResetPassword() {
+      hideError();
+      const email = document.getElementById('reset-email').value.trim();
+      if (!email) { showError('Vul je e-mailadres in'); return; }
+      
+      const btn = document.getElementById('reset-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Versturen...</span>';
+
+      try {
+        const res = await fetch('/api/admin/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          document.getElementById('reset-success-text').textContent = data.message;
+          document.getElementById('reset-success').classList.remove('hidden');
+          btn.innerHTML = '<i class="fas fa-check"></i><span>Verstuurd!</span>';
+          btn.classList.remove('bg-amber-500','hover:bg-amber-600');
+          btn.classList.add('bg-green-500');
+        } else {
+          showError(data.error || 'Er ging iets mis');
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fas fa-paper-plane"></i><span>Verstuur reset-link</span>';
+        }
+      } catch(e) {
+        showError('Verbindingsfout. Probeer opnieuw.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-paper-plane"></i><span>Verstuur reset-link</span>';
+      }
+    }
 
     async function handleLogin(e) {
       e.preventDefault();
