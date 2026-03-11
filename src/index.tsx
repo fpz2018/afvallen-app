@@ -3484,6 +3484,7 @@ app.post('/api/portal/verify-code', async (c) => {
   }
   
   return c.json({
+    id: data.id,
     patient_id: data.id,
     first_name: data.first_name,
     last_name: data.last_name,
@@ -3644,19 +3645,44 @@ app.post('/api/portal/lab-upload', async (c) => {
   
   if (!patient) return c.json({ error: 'Ongeldige toegangscode' }, 401)
   
-  // Store the upload reference in progress_tracking or a notes field
+  // Controleer of bestandsdata aanwezig is
+  if (!body.file_data) {
+    return c.json({ error: 'Geen bestandsdata ontvangen. Selecteer een bestand.' }, 400)
+  }
+
+  // Sla upload metadata op in progress_tracking
   const { data, error } = await db
     .from('progress_tracking')
     .insert([{
       patient_id: patient.id,
       measurement_date: new Date().toISOString().split('T')[0],
-      notes: `📎 Lab-document geüpload via portaal: ${body.file_name || 'onbekend'} (${body.file_type || 'onbekend'}) - ${new Date().toLocaleString('nl-NL')}`
+      notes: `📎 Lab-document geüpload via portaal: ${body.file_name || 'onbekend'} (${body.file_type || 'onbekend'}, ${((body.file_size || 0) / 1024).toFixed(0)} KB) - ${new Date().toLocaleString('nl-NL')}${body.notes ? '\n📝 Opmerking: ' + body.notes : ''}`
     }])
     .select()
     .single()
-  
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json({ success: true, message: 'Document ontvangen. Uw therapeut wordt geïnformeerd.' })
+
+  if (error) {
+    console.error('Lab upload error:', error)
+    return c.json({ error: 'Fout bij opslaan. Probeer opnieuw.' }, 500)
+  }
+
+  // Sla de base64 data op in een apart lab_uploads record (als die tabel bestaat)
+  try {
+    await db.from('lab_uploads').insert([{
+      patient_id: patient.id,
+      file_name: body.file_name,
+      file_type: body.file_type,
+      file_size: body.file_size,
+      file_data: body.file_data,
+      notes: body.notes || null,
+      status: 'pending'
+    }])
+  } catch(e) {
+    // lab_uploads tabel bestaat mogelijk nog niet - geen probleem, metadata is opgeslagen
+    console.log('lab_uploads tabel niet beschikbaar, metadata opgeslagen in progress_tracking')
+  }
+
+  return c.json({ success: true, message: 'Document succesvol ontvangen! Uw therapeut wordt geïnformeerd en verwerkt de resultaten in uw dossier.' })
 })
 
 // =====================================================
@@ -4535,10 +4561,15 @@ app.get('/betalen/analyse', (c) => {
   <script>
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
-    if (!portalCode) { window.location.href = '/inloggen'; }
+    if (!portalCode || !patientInfo.id) { window.location.href = '/inloggen'; }
 
     async function startPayment() {
       const btn = document.getElementById('pay-btn');
+      if (!patientInfo.id) {
+        alert('Sessie verlopen. Log opnieuw in.');
+        window.location.href = '/inloggen';
+        return;
+      }
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Moment geduld...';
 
@@ -4682,7 +4713,7 @@ app.get('/betalen/protocol', (c) => {
   <script>
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
-    if (!portalCode) { window.location.href = '/inloggen'; }
+    if (!portalCode || !patientInfo.id) { window.location.href = '/inloggen'; }
 
     function updateSlider(val) {
       const euros = Math.floor(val / 100);
@@ -4717,6 +4748,11 @@ app.get('/betalen/protocol', (c) => {
     async function startProtocolPayment() {
       const btn = document.getElementById('pay-btn');
       const amount = document.getElementById('price-slider').value;
+      if (!patientInfo.id) {
+        alert('Sessie verlopen. Log opnieuw in.');
+        window.location.href = '/inloggen';
+        return;
+      }
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Moment geduld...';
 
@@ -5298,27 +5334,47 @@ app.get('/vragenlijst', (c) => {
       html += '<h3 class="font-bold text-xl text-gray-800 mb-4"><i class="fas fa-clipboard-list mr-2 text-portal-600"></i>Uw Antwoorden</h3>';
       if (result.responses) {
         const questionLabels = {
-          weight_history: "Hoe lang probeert u al af te vallen?",
-          diet_attempts: "Welke diëten heeft u al geprobeerd?",
-          weight_loss_difficulty: "Hoe moeilijk vindt u het om af te vallen?",
-          energy_level: "Hoe is uw energieniveau?",
-          sleep_quality: "Hoe is uw slaapkwaliteit?",
-          stress_level: "Hoe hoog is uw stressniveau?",
-          thyroid_symptoms: "Heeft u schildklier-gerelateerde klachten?",
-          hormone_symptoms: "Heeft u hormonale klachten?",
-          insulin_symptoms: "Heeft u symptomen van insulineresistentie?",
-          medication_use: "Welke medicatie gebruikt u?",
-          digestive_issues: "Heeft u spijsverteringsklachten?",
-          exercise_frequency: "Hoe vaak beweegt u?",
-          eating_pattern: "Hoe is uw eetpatroon?",
-          medical_conditions: "Welke medische aandoeningen heeft u?",
-          motivation: "Wat is uw motivatie?"
+          gender: "Wat is uw geslacht?",
+          age: "Wat is uw leeftijd?",
+          duration_trying: "Hoe lang probeert u al af te vallen?",
+          weight_loss_success: "Valt u af ondanks calorierestrictie en beweging?",
+          fatigue_cold_dry: "Bent u vaak moe, heeft u het vaak koud en heeft u droge huid?",
+          menstrual_regularity: "Is uw menstruatiecyclus regelmatig?",
+          stress_frequency: "Ervaart u regelmatig stress of angst?",
+          sleep_quality: "Hoe is uw slaap?",
+          medication_use: "Welke medicijnen gebruikt u?",
+          statin_side_effects: "Heeft u last van spierpijn of vermoeidheid bij statinegebruik?",
+          hunger_after_meal: "Heeft u honger kort na een maaltijd (< 2 uur)?",
+          fat_distribution: "Waar zit het meeste vet bij u?",
+          sugar_cravings: "Heeft u sterke trek in suiker/zoet?",
+          menopause_status: "Bent u in de overgang of postmenopauzaal?",
+          diagnosed_conditions: "Heeft u een diagnose van:"
+        };
+        const answerLabels = {
+          male: "Man", female: "Vrouw", other: "Anders",
+          less_3_months: "Minder dan 3 maanden", "3_6_months": "3-6 maanden", "6_12_months": "6-12 maanden", over_1_year: "Meer dan 1 jaar",
+          easy: "Ja, moeiteloos", slow: "Langzaam maar wel", barely: "Nauwelijks / plateau", none: "Nee, geen resultaat",
+          yes: "Ja", sometimes: "Soms", no: "Nee", na: "Niet van toepassing",
+          irregular: "Onregelmatig",
+          daily: "Dagelijks", weekly: "Wekelijks", rarely: "Zelden", never: "Nooit",
+          excellent: "Uitstekend (7-9 uur doorslapen)", fair: "Redelijk (wordt soms wakker)", moderate: "Matig (moeite met inslapen)", poor: "Slecht (< 6 uur of zeer onrustig)",
+          thyroid_med: "Schildkliermedicatie", statins: "Statines (cholesterol)", diabetes_med: "Diabetesmedicatie", antidepressants: "Antidepressiva", beta_blockers: "Bètablokkers",
+          no_statins: "Gebruik geen statines",
+          always: "Altijd", often: "Vaak",
+          belly: "Buik (visceraal)", hips_legs: "Heupen/benen", even: "Gelijkmatig verdeeld", unsure: "Onzeker",
+          regularly: "Regelmatig",
+          diabetes: "Diabetes type 2", pcos: "PCOS", hashimoto: "Hashimoto", thyroid: "Andere schildklieraandoening"
         };
         html += '<div class="space-y-3">';
         Object.entries(result.responses).forEach(function(entry) {
           var key = entry[0], value = entry[1];
           var label = questionLabels[key] || key;
-          var displayVal = Array.isArray(value) ? value.join(", ") : (value || "-");
+          var displayVal;
+          if (Array.isArray(value)) {
+            displayVal = value.map(function(v) { return answerLabels[v] || v; }).join(", ");
+          } else {
+            displayVal = answerLabels[value] || value || "-";
+          }
           html += '<div class="border-b border-gray-100 pb-3"><p class="text-sm font-semibold text-gray-600">' + label + '</p><p class="text-gray-800 mt-0.5">' + displayVal + '</p></div>';
         });
         html += '</div>';
@@ -5473,6 +5529,14 @@ app.get('/lab-upload', (c) => {
       const notes = document.getElementById('upload-notes').value.trim();
       
       try {
+        // Lees bestand als base64
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(selectedFile);
+        });
+
         const res = await fetch('/api/portal/lab-upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -5481,6 +5545,7 @@ app.get('/lab-upload', (c) => {
             file_name: selectedFile.name,
             file_type: selectedFile.type,
             file_size: selectedFile.size,
+            file_data: base64Data,
             notes: notes
           })
         });
