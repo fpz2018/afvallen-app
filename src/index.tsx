@@ -3567,7 +3567,7 @@ app.post('/api/portal/assessment', async (c) => {
   
   const assessmentData = {
     patient_id: patient.id,
-    assessment_type: 'portal_self',
+    assessment_type: 'standard',  // portal self-assessment (constraint: quick/standard/deep)
     determined_type: classification.primaryType,
     categories: classification.categories,
     risk_scores: classification.riskScores,
