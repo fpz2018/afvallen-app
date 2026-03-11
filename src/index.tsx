@@ -14,6 +14,18 @@ type EnvVars = {
   STRIPE_PUBLISHABLE_KEY: string
 }
 
+// Helper: haal env variabelen op (werkt op Netlify, Cloudflare, en lokaal)
+function getEnv(c: any): EnvVars {
+  const honoEnv = env<EnvVars>(c)
+  const processEnv = typeof process !== 'undefined' ? (process as any).env || {} : {}
+  return {
+    SUPABASE_URL: honoEnv.SUPABASE_URL || processEnv.SUPABASE_URL || '',
+    SUPABASE_ANON_KEY: honoEnv.SUPABASE_ANON_KEY || processEnv.SUPABASE_ANON_KEY || '',
+    STRIPE_SECRET_KEY: honoEnv.STRIPE_SECRET_KEY || processEnv.STRIPE_SECRET_KEY || '',
+    STRIPE_PUBLISHABLE_KEY: honoEnv.STRIPE_PUBLISHABLE_KEY || processEnv.STRIPE_PUBLISHABLE_KEY || '',
+  }
+}
+
 const app = new Hono()
 
 app.use('/api/*', cors())
@@ -185,7 +197,7 @@ app.post('/api/admin/login', async (c) => {
     return c.json({ error: 'Email en wachtwoord zijn verplicht' }, 400)
   }
 
-  const { SUPABASE_URL, SUPABASE_ANON_KEY } = env<EnvVars>(c)
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
   
   // Supabase Auth login
   const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -201,7 +213,7 @@ app.post('/api/admin/login', async (c) => {
   }
 
   // Check of 2FA is ingeschakeld via admin_2fa tabel
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data: faData } = await db.from('admin_2fa').select('totp_secret, enabled').eq('email', data.user?.email || email).single()
   
   if (faData?.enabled && faData?.totp_secret) {
@@ -252,8 +264,8 @@ app.post('/api/admin/verify-2fa', async (c) => {
   }
 
   // Haal TOTP secret op via admin_2fa tabel
-  const { SUPABASE_URL, SUPABASE_ANON_KEY } = env<EnvVars>(c)
-  const db = getSupabase(env<EnvVars>(c))
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
+  const db = getSupabase(getEnv(c))
   const { data: faData } = await db.from('admin_2fa').select('totp_secret').eq('email', pending.email).single()
   const secret = faData?.totp_secret
 
@@ -305,7 +317,7 @@ app.post('/api/admin/2fa/enable', async (c) => {
 
   // Sla secret op in admin_2fa tabel
   const session = activeSessions.get(sessionToken!)
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { error } = await db.from('admin_2fa').upsert({ 
     email: session!.email, 
     totp_secret: secret, 
@@ -331,7 +343,7 @@ app.post('/api/admin/2fa/disable', async (c) => {
   const session = activeSessions.get(sessionToken!)
   
   // Verifieer huidige 2FA code voordat we uitschakelen
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data: fa } = await db.from('admin_2fa').select('totp_secret').eq('email', session!.email).single()
   
   if (fa?.totp_secret) {
@@ -349,7 +361,7 @@ app.get('/api/admin/2fa/status', async (c) => {
   if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
   
   const session = activeSessions.get(sessionToken!)
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db.from('admin_2fa').select('enabled').eq('email', session!.email).single()
   
   // Als de tabel niet bestaat, geef dat aan
@@ -434,7 +446,7 @@ app.use('/api/*', async (c, next) => {
 // API: PATIENTS
 // =====================================================
 app.get('/api/patients', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const status = c.req.query('status') || 'active'
   const { data, error } = await db
     .from('patients')
@@ -446,7 +458,7 @@ app.get('/api/patients', async (c) => {
 })
 
 app.get('/api/patients/:id', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db
     .from('patients')
     .select(`
@@ -463,7 +475,7 @@ app.get('/api/patients/:id', async (c) => {
 })
 
 app.post('/api/patients', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('patients')
@@ -475,7 +487,7 @@ app.post('/api/patients', async (c) => {
 })
 
 app.patch('/api/patients/:id', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('patients')
@@ -488,7 +500,7 @@ app.patch('/api/patients/:id', async (c) => {
 })
 
 app.delete('/api/patients/:id', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { error } = await db
     .from('patients')
     .update({ status: 'archived' })
@@ -499,7 +511,7 @@ app.delete('/api/patients/:id', async (c) => {
 
 // Hard delete: permanently remove patient and all related data
 app.delete('/api/patients/:id/permanent', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const id = c.req.param('id')
   // Delete in order: children first (FK constraints)
   await db.from('follow_ups').delete().eq('patient_id', id)
@@ -516,7 +528,7 @@ app.delete('/api/patients/:id/permanent', async (c) => {
 // API: ASSESSMENTS
 // =====================================================
 app.post('/api/assessments', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
 
   // Run classification
@@ -583,7 +595,7 @@ app.post('/api/assessments', async (c) => {
 })
 
 app.get('/api/assessments/:id', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db
     .from('assessments')
     .select('*')
@@ -595,7 +607,7 @@ app.get('/api/assessments/:id', async (c) => {
 
 // Update review status (admin marks assessment as reviewed)
 app.patch('/api/assessments/:id/review', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { review_status, reviewer_notes } = await c.req.json()
   
   if (!review_status || !['pending_review', 'reviewed', 'needs_followup'].includes(review_status)) {
@@ -621,7 +633,7 @@ app.patch('/api/assessments/:id/review', async (c) => {
 
 // Get all assessments for a patient (history)
 app.get('/api/assessments/patient/:patientId', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db
     .from('assessments')
     .select('*')
@@ -635,7 +647,7 @@ app.get('/api/assessments/patient/:patientId', async (c) => {
 // API: LAB TESTS
 // =====================================================
 app.get('/api/lab-tests/:patientId', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db
     .from('lab_tests')
     .select('*')
@@ -646,7 +658,7 @@ app.get('/api/lab-tests/:patientId', async (c) => {
 })
 
 app.patch('/api/lab-tests/:id/results', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
 
   // Interpret results
@@ -672,7 +684,7 @@ app.patch('/api/lab-tests/:id/results', async (c) => {
 // API: PROTOCOLS
 // =====================================================
 app.post('/api/protocols', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
 
   const protocol = generateProtocol(body.categories)
@@ -702,7 +714,7 @@ app.post('/api/protocols', async (c) => {
 })
 
 app.get('/api/protocols/:patientId', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db
     .from('supplement_protocols')
     .select('*')
@@ -716,7 +728,7 @@ app.get('/api/protocols/:patientId', async (c) => {
 // API: PROGRESS TRACKING (with symptom scores)
 // =====================================================
 app.post('/api/progress', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   // Ensure symptoms is a proper JSONB object
   if (body.symptoms && typeof body.symptoms === 'object') {
@@ -732,7 +744,7 @@ app.post('/api/progress', async (c) => {
 })
 
 app.get('/api/progress/:patientId', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db
     .from('progress_tracking')
     .select('*')
@@ -746,7 +758,7 @@ app.get('/api/progress/:patientId', async (c) => {
 // API: FOLLOW-UPS
 // =====================================================
 app.get('/api/follow-ups/:patientId', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { data, error } = await db
     .from('follow_ups')
     .select('*')
@@ -757,7 +769,7 @@ app.get('/api/follow-ups/:patientId', async (c) => {
 })
 
 app.post('/api/follow-ups', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('follow_ups')
@@ -769,7 +781,7 @@ app.post('/api/follow-ups', async (c) => {
 })
 
 app.patch('/api/follow-ups/:id', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const { data, error } = await db
     .from('follow_ups')
@@ -782,7 +794,7 @@ app.patch('/api/follow-ups/:id', async (c) => {
 })
 
 app.delete('/api/follow-ups/:id', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { error } = await db
     .from('follow_ups')
     .delete()
@@ -795,7 +807,7 @@ app.delete('/api/follow-ups/:id', async (c) => {
 // API: DASHBOARD STATS
 // =====================================================
 app.get('/api/stats', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
 
   const [patients, assessments, labTests, protocols] = await Promise.all([
     db.from('patients').select('id, status, created_at', { count: 'exact' }).eq('status', 'active'),
@@ -3096,8 +3108,8 @@ const PAYMENT_TYPES = {
 
 // Create Stripe Checkout Session voor analyse (vast bedrag €9,95)
 app.post('/api/payments/create-checkout', async (c) => {
-  const { STRIPE_SECRET_KEY } = env<EnvVars>(c)
-  const db = getSupabase(env<EnvVars>(c))
+  const { STRIPE_SECRET_KEY } = getEnv(c)
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const { patient_id, payment_type, amount, portal_code } = body
 
@@ -3188,8 +3200,8 @@ app.post('/api/payments/create-checkout', async (c) => {
 
 // Verify payment status
 app.get('/api/payments/verify/:sessionId', async (c) => {
-  const { STRIPE_SECRET_KEY } = env<EnvVars>(c)
-  const db = getSupabase(env<EnvVars>(c))
+  const { STRIPE_SECRET_KEY } = getEnv(c)
+  const db = getSupabase(getEnv(c))
   const sessionId = c.req.param('sessionId')
 
   try {
@@ -3226,7 +3238,7 @@ app.get('/api/payments/verify/:sessionId', async (c) => {
 
 // Check payment status voor een patiënt
 app.get('/api/payments/status/:patientId', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const patientId = c.req.param('patientId')
 
   const { data: payments } = await db
@@ -3248,7 +3260,7 @@ app.get('/api/payments/status/:patientId', async (c) => {
 
 // Get Stripe publishable key (voor frontend)
 app.get('/api/payments/config', (c) => {
-  const { STRIPE_PUBLISHABLE_KEY } = env<EnvVars>(c)
+  const { STRIPE_PUBLISHABLE_KEY } = getEnv(c)
   return c.json({ publishableKey: STRIPE_PUBLISHABLE_KEY })
 })
 
@@ -3321,7 +3333,7 @@ const portalNav = `
 
 // Zelf-registratie: patiënt maakt zelf een account aan
 app.post('/api/portal/register', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const { first_name, last_name, email, gender, date_of_birth, consent_given, consent_timestamp } = body
 
@@ -3413,7 +3425,7 @@ app.post('/api/portal/register', async (c) => {
 })
 
 app.post('/api/portal/generate-code', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { patient_id } = await c.req.json()
   
   // Generate 8-character alphanumeric code
@@ -3447,7 +3459,7 @@ app.post('/api/portal/generate-code', async (c) => {
 })
 
 app.post('/api/portal/verify-code', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const { code } = await c.req.json()
   const upperCode = code.toUpperCase().trim()
   
@@ -3482,7 +3494,7 @@ app.post('/api/portal/verify-code', async (c) => {
 
 // Portal status check (voor menu)
 app.get('/api/portal/check-status', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const code = c.req.query('code')
 
   if (!code) return c.json({ error: 'Code ontbreekt' }, 400)
@@ -3522,7 +3534,7 @@ app.get('/api/portal/check-status', async (c) => {
 
 // Portal assessment submission (from patient side)
 app.post('/api/portal/assessment', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const upperCode = body.portal_code?.toUpperCase()?.trim()
   
@@ -3609,7 +3621,7 @@ app.post('/api/portal/assessment', async (c) => {
 
 // Portal lab document upload (store as base64 in Supabase since no R2/Storage)
 app.post('/api/portal/lab-upload', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   const body = await c.req.json()
   const upperCode = body.portal_code?.toUpperCase()?.trim()
   
@@ -5500,7 +5512,7 @@ app.get('/lab-upload', (c) => {
 // THERAPEUT: Genereer toegangscode knop (toevoegen aan patient profiel)
 // =====================================================
 app.get('/api/patients/:id/portal-code', async (c) => {
-  const db = getSupabase(env<EnvVars>(c))
+  const db = getSupabase(getEnv(c))
   // Try portal_code column first
   const { data, error } = await db
     .from('patients')
