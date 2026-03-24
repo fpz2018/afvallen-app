@@ -6,6 +6,7 @@ import { getSupabase } from './lib/supabase'
 import { classifyPatient, TriageResponses } from './lib/classification'
 import { getLabRecommendations, interpretLabResults, generateRiskProfile } from './lib/lab-recommendations'
 import { generateProtocol } from './lib/protocol-engine'
+import { validate, LoginSchema, ResetPasswordSchema, UpdatePasswordSchema, Verify2FASchema, Enable2FASchema, Disable2FASchema, CreatePatientSchema, UpdatePatientSchema, CreateAssessmentSchema, CreateProtocolSchema, CreateProgressSchema, CreateFollowUpSchema, UpdateFollowUpSchema } from './lib/schemas'
 
 type EnvVars = {
   SUPABASE_URL: string
@@ -222,10 +223,9 @@ app.post('/api/admin/login', async (c) => {
     }, 429)
   }
 
-  const { email, password } = await c.req.json()
-  if (!email || !password) {
-    return c.json({ error: 'Email en wachtwoord zijn verplicht' }, 400)
-  }
+  const parsed = validate(LoginSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { email, password } = parsed.data
 
   const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
 
@@ -285,10 +285,9 @@ app.post('/api/admin/reset-password', async (c) => {
     return c.json({ error: `Te veel pogingen. Wacht ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`, blocked: true }, 429)
   }
 
-  const { email } = await c.req.json()
-  if (!email) {
-    return c.json({ error: 'Vul je e-mailadres in' }, 400)
-  }
+  const parsed = validate(ResetPasswordSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { email } = parsed.data
 
   const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
 
@@ -325,13 +324,9 @@ app.post('/api/admin/reset-password', async (c) => {
 
 // Wachtwoord updaten met recovery token
 app.post('/api/admin/update-password', async (c) => {
-  const { access_token, new_password } = await c.req.json()
-  if (!access_token || !new_password) {
-    return c.json({ error: 'Token en nieuw wachtwoord zijn verplicht' }, 400)
-  }
-  if (new_password.length < 8) {
-    return c.json({ error: 'Wachtwoord moet minimaal 8 tekens bevatten' }, 400)
-  }
+  const parsed = validate(UpdatePasswordSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { access_token, new_password } = parsed.data
 
   const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
 
@@ -367,10 +362,9 @@ app.post('/api/admin/verify-2fa', async (c) => {
     return c.json({ error: `Te veel pogingen. Wacht ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`, blocked: true }, 429)
   }
 
-  const { pending_token, totp_code } = await c.req.json()
-  if (!pending_token || !totp_code) {
-    return c.json({ error: 'Token en verificatiecode zijn verplicht' }, 400)
-  }
+  const parsed = validate(Verify2FASchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { pending_token, totp_code } = parsed.data
 
   const db = getSupabase(getEnv(c))
 
@@ -430,8 +424,9 @@ app.post('/api/admin/2fa/enable', async (c) => {
   const { valid: sessionValid, email } = await getSessionUser(c)
   if (!sessionValid) return c.json({ error: 'Niet ingelogd' }, 401)
 
-  const { secret, totp_code } = await c.req.json()
-  if (!secret || !totp_code) return c.json({ error: 'Secret en code zijn verplicht' }, 400)
+  const parsed = validate(Enable2FASchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { secret, totp_code } = parsed.data
 
   const valid = await verifyTOTP(secret, totp_code)
   if (!valid) return c.json({ error: 'Ongeldige code. Probeer opnieuw.' }, 400)
@@ -459,7 +454,9 @@ app.post('/api/admin/2fa/disable', async (c) => {
   const { valid, email } = await getSessionUser(c)
   if (!valid) return c.json({ error: 'Niet ingelogd' }, 401)
 
-  const { totp_code } = await c.req.json()
+  const parsed = validate(Disable2FASchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { totp_code } = parsed.data
 
   // Verifieer huidige 2FA code voordat we uitschakelen
   const db = getSupabase(getEnv(c))
@@ -590,26 +587,19 @@ app.get('/api/patients/:id', async (c) => {
 })
 
 app.post('/api/patients', async (c) => {
+  const parsed = validate(CreatePatientSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
   const db = getSupabase(getEnv(c))
-  const body = await c.req.json()
-  const { data, error } = await db
-    .from('patients')
-    .insert([body])
-    .select()
-    .single()
+  const { data, error } = await db.from('patients').insert([parsed.data]).select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data, 201)
 })
 
 app.patch('/api/patients/:id', async (c) => {
+  const parsed = validate(UpdatePatientSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
   const db = getSupabase(getEnv(c))
-  const body = await c.req.json()
-  const { data, error } = await db
-    .from('patients')
-    .update(body)
-    .eq('id', c.req.param('id'))
-    .select()
-    .single()
+  const { data, error } = await db.from('patients').update(parsed.data).eq('id', c.req.param('id')).select().single()
   if (error) return c.json({ error: error.message }, 500)
   return c.json(data)
 })
@@ -643,26 +633,27 @@ app.delete('/api/patients/:id/permanent', async (c) => {
 // API: ASSESSMENTS
 // =====================================================
 app.post('/api/assessments', async (c) => {
+  const parsed = validate(CreateAssessmentSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
   const db = getSupabase(getEnv(c))
-  const body = await c.req.json()
 
   // Run classification
-  const classification = classifyPatient(body.responses as TriageResponses)
+  const classification = classifyPatient(parsed.data.responses as TriageResponses)
 
   // Generate risk profile
   const riskProfile = generateRiskProfile(
     classification.categories,
     classification.riskScores,
-    body.responses
+    parsed.data.responses
   )
 
   const assessmentData = {
-    patient_id: body.patient_id,
-    assessment_type: body.assessment_type || 'quick',
+    patient_id: parsed.data.patient_id,
+    assessment_type: parsed.data.assessment_type,
     determined_type: classification.primaryType,
     categories: classification.categories,
     risk_scores: classification.riskScores,
-    responses: body.responses,
+    responses: parsed.data.responses,
     risk_profile: riskProfile,
     completed: true
   }
@@ -679,17 +670,17 @@ app.post('/api/assessments', async (c) => {
   await db
     .from('patients')
     .update({ patient_type: classification.primaryType.charAt(0).toUpperCase() })
-    .eq('id', body.patient_id)
+    .eq('id', parsed.data.patient_id)
 
   // Generate lab recommendations (blood + stool + other)
   const categoryIds = classification.categories.map(cat => cat.id)
-  const labPackage = getLabRecommendations(categoryIds, body.responses)
+  const labPackage = getLabRecommendations(categoryIds, parsed.data.responses)
 
   // Store lab test recommendation (including stool tests)
   await db
     .from('lab_tests')
     .insert([{
-      patient_id: body.patient_id,
+      patient_id: parsed.data.patient_id,
       assessment_id: data.id,
       test_package: labPackage.name,
       recommended_tests: labPackage.tests,
@@ -799,15 +790,16 @@ app.patch('/api/lab-tests/:id/results', async (c) => {
 // API: PROTOCOLS
 // =====================================================
 app.post('/api/protocols', async (c) => {
+  const parsed = validate(CreateProtocolSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
   const db = getSupabase(getEnv(c))
-  const body = await c.req.json()
 
-  const protocol = generateProtocol(body.categories)
+  const protocol = generateProtocol(parsed.data.categories)
 
   const protocolData = {
-    patient_id: body.patient_id,
-    assessment_id: body.assessment_id,
-    protocol_type: body.categories.join('+'),
+    patient_id: parsed.data.patient_id,
+    assessment_id: parsed.data.assessment_id,
+    protocol_type: parsed.data.categories.join('+'),
     supplements: protocol.supplements,
     nutrition: protocol.nutrition,
     lifestyle: protocol.lifestyle,
@@ -816,7 +808,7 @@ app.post('/api/protocols', async (c) => {
     start_date: new Date().toISOString().split('T')[0],
     duration_weeks: 12,
     status: 'active',
-    notes: body.notes || ''
+    notes: parsed.data.notes
   }
 
   const { data, error } = await db
@@ -844,15 +836,12 @@ app.get('/api/protocols/:patientId', async (c) => {
 // API: PROGRESS TRACKING (with symptom scores)
 // =====================================================
 app.post('/api/progress', async (c) => {
+  const parsed = validate(CreateProgressSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
   const db = getSupabase(getEnv(c))
-  const body = await c.req.json()
-  // Ensure symptoms is a proper JSONB object
-  if (body.symptoms && typeof body.symptoms === 'object') {
-    body.symptoms = body.symptoms
-  }
   const { data, error } = await db
     .from('progress_tracking')
-    .insert([body])
+    .insert([parsed.data])
     .select()
     .single()
   if (error) return c.json({ error: error.message }, 500)
@@ -885,11 +874,12 @@ app.get('/api/follow-ups/:patientId', async (c) => {
 })
 
 app.post('/api/follow-ups', async (c) => {
+  const parsed = validate(CreateFollowUpSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
   const db = getSupabase(getEnv(c))
-  const body = await c.req.json()
   const { data, error } = await db
     .from('follow_ups')
-    .insert([body])
+    .insert([parsed.data])
     .select()
     .single()
   if (error) return c.json({ error: error.message }, 500)
@@ -897,11 +887,12 @@ app.post('/api/follow-ups', async (c) => {
 })
 
 app.patch('/api/follow-ups/:id', async (c) => {
+  const parsed = validate(UpdateFollowUpSchema, await c.req.json())
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
   const db = getSupabase(getEnv(c))
-  const body = await c.req.json()
   const { data, error } = await db
     .from('follow_ups')
-    .update(body)
+    .update(parsed.data)
     .eq('id', c.req.param('id'))
     .select()
     .single()
