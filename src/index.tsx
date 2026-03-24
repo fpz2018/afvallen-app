@@ -9,7 +9,8 @@ import { generateProtocol } from './lib/protocol-engine'
 
 type EnvVars = {
   SUPABASE_URL: string
-  SUPABASE_ANON_KEY: string
+  SUPABASE_ANON_KEY: string        // voor Supabase Auth REST API calls (login, wachtwoord reset)
+  SUPABASE_SERVICE_ROLE_KEY: string // voor database operaties via getSupabase()
   STRIPE_SECRET_KEY: string
   STRIPE_PUBLISHABLE_KEY: string
 }
@@ -21,6 +22,7 @@ function getEnv(c: any): EnvVars {
   return {
     SUPABASE_URL: honoEnv.SUPABASE_URL || processEnv.SUPABASE_URL || '',
     SUPABASE_ANON_KEY: honoEnv.SUPABASE_ANON_KEY || processEnv.SUPABASE_ANON_KEY || '',
+    SUPABASE_SERVICE_ROLE_KEY: honoEnv.SUPABASE_SERVICE_ROLE_KEY || processEnv.SUPABASE_SERVICE_ROLE_KEY || '',
     STRIPE_SECRET_KEY: honoEnv.STRIPE_SECRET_KEY || processEnv.STRIPE_SECRET_KEY || '',
     STRIPE_PUBLISHABLE_KEY: honoEnv.STRIPE_PUBLISHABLE_KEY || processEnv.STRIPE_PUBLISHABLE_KEY || '',
   }

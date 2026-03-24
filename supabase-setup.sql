@@ -119,18 +119,5 @@ CREATE POLICY "Authenticated users full access progress_tracking" ON progress_tr
     FOR ALL USING (auth.role() = 'authenticated')
     WITH CHECK (auth.role() = 'authenticated');
 
--- Also allow anon access for now (during development) - remove in production
-CREATE POLICY "Anon read access patients" ON patients
-    FOR ALL USING (true) WITH CHECK (true);
-
-CREATE POLICY "Anon read access assessments" ON assessments
-    FOR ALL USING (true) WITH CHECK (true);
-
-CREATE POLICY "Anon read access lab_tests" ON lab_tests
-    FOR ALL USING (true) WITH CHECK (true);
-
-CREATE POLICY "Anon read access supplement_protocols" ON supplement_protocols
-    FOR ALL USING (true) WITH CHECK (true);
-
-CREATE POLICY "Anon read access progress_tracking" ON progress_tracking
-    FOR ALL USING (true) WITH CHECK (true);
+-- Anon policies verwijderd - server gebruikt service role key voor alle DB-operaties
+-- Zie src/lib/supabase.ts en gebruik SUPABASE_SERVICE_ROLE_KEY in je .env / Netlify env vars
