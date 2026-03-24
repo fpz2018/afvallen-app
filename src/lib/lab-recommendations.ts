@@ -427,21 +427,24 @@ export interface LabReference {
 export const LAB_REFERENCES: LabReference[] = [
   // === BLOED ===
   {
-    code: 'TSH', name: 'TSH', optimalMin: 0.4, optimalMax: 2.5, unit: 'mU/L', type: 'blood',
+    // Orthomoleculair optimaal: 0.4–2.0 mU/L (Pruimboom); streef laag-normaal, >2.5 = subklinisch hypothyreoïdie
+    code: 'TSH', name: 'TSH', optimalMin: 0.4, optimalMax: 2.0, unit: 'mU/L', type: 'blood',
     lowAlert: 'Mogelijk hyperthyreoïdie',
     highAlert: 'Mogelijk hypothyreoïdie - metabolisme vertraagd',
     lowActions: ['Verwijs endocrinoloog', 'Check fT3, fT4'],
     highActions: ['Check fT3, fT4, TPO', 'Verwijs huisarts', 'Start Se 200µg + Zn 25mg']
   },
   {
-    code: 'fT3', name: 'Vrij T3', optimalMin: 4.0, optimalMax: 6.5, unit: 'pmol/L', type: 'blood',
+    // Orthomoleculair optimaal: 3.6–6.5 pmol/L (Pruimboom); actief schildklierhormoon
+    code: 'fT3', name: 'Vrij T3', optimalMin: 3.6, optimalMax: 6.5, unit: 'pmol/L', type: 'blood',
     lowAlert: 'Lage T3 conversie - vertraagd metabolisme',
     highAlert: 'Verhoogd fT3',
     lowActions: ['Check rT3', 'Start selenium 200µg', 'L-carnitine 1000mg', 'Zink 25mg'],
     highActions: ['Verwijs endocrinoloog']
   },
   {
-    code: 'fT4', name: 'Vrij T4', optimalMin: 12, optimalMax: 22, unit: 'pmol/L', type: 'blood',
+    // Orthomoleculair optimaal: 12–25 pmol/L (OrthoKennis); hogere ondergrens dan standaard
+    code: 'fT4', name: 'Vrij T4', optimalMin: 12, optimalMax: 25, unit: 'pmol/L', type: 'blood',
     lowAlert: 'Laag fT4 - schildklier produceert onvoldoende', highAlert: 'Hoog fT4 - overproductie',
     lowActions: ['Check TSH, TPO', 'Evalueer schildklierfunctie', 'Verwijs bij TSH >4.0'],
     highActions: ['Verwijs endocrinoloog']
@@ -473,11 +476,12 @@ export const LAB_REFERENCES: LabReference[] = [
     highActions: ['Uitsluiten hemochromatose (HFE-gen)', 'Check CRP, leverfunctie', 'Uitsluiten chronische ontsteking']
   },
   {
-    code: 'VITD', name: 'Vitamine D', optimalMin: 75, optimalMax: 125, unit: 'nmol/L', type: 'blood',
+    // Orthomoleculair optimaal: 75–150 nmol/L (OrthoKennis); <75 = deficiënt, >250 = toxiciteitsrisico
+    code: 'VITD', name: 'Vitamine D', optimalMin: 75, optimalMax: 150, unit: 'nmol/L', type: 'blood',
     lowAlert: 'Vitamine D tekort - insulineresistentie versterkt',
-    highAlert: 'Vitamine D te hoog',
-    lowActions: ['Start 4000 IE/dag (of 50.000 IE/week bij <30)', 'Neem met vetrijke maaltijd', 'Retest na 3 maanden'],
-    highActions: ['Stop suppletie', 'Check calcium', 'Retest na 4 weken']
+    highAlert: 'Vitamine D te hoog - check calcium',
+    lowActions: ['Start 4000 IE/dag (of 50.000 IE/week bij <30 nmol/L)', 'Neem met vetrijke maaltijd', 'Retest na 3 maanden'],
+    highActions: ['Stop suppletie bij >250 nmol/L', 'Check calcium', 'Retest na 4 weken']
   },
   {
     code: 'COQ10', name: 'CoQ10', optimalMin: 0.5, optimalMax: 1.5, unit: 'µmol/L', type: 'blood',
@@ -487,16 +491,18 @@ export const LAB_REFERENCES: LabReference[] = [
     highActions: []
   },
   {
-    code: 'HBA1C', name: 'HbA1c', optimalMin: 4.0, optimalMax: 5.6, unit: '%', type: 'blood',
+    // Orthomoleculair optimaal: 22–36 mmol/mol (OrthoKennis) ≈ 4.1–5.4%; >46 mmol/mol = diabetes
+    code: 'HBA1C', name: 'HbA1c', optimalMin: 4.0, optimalMax: 5.4, unit: '%', type: 'blood',
     lowAlert: '', highAlert: 'Prediabetes/diabetes - chronisch verhoogde bloedsuiker',
     lowActions: [],
-    highActions: ['5.7-6.4%: prediabetes protocol', 'Koolhydraatrestrictie + berberine', '>6.5%: verwijs huisarts (diabetes)']
+    highActions: ['5.5-6.4%: prediabetes protocol', 'Koolhydraatrestrictie + berberine 500mg 2x/dag', '>6.5%: verwijs huisarts (diabetes)']
   },
   {
-    code: 'CRP', name: 'hs-CRP', optimalMin: 0, optimalMax: 1.0, unit: 'mg/L', type: 'blood',
+    // Orthomoleculair optimaal: <3 mg/L (OrthoKennis); 3–10 = LGI; >10 = auto-immuun/viraal; >40 = bacterieel
+    code: 'CRP', name: 'hs-CRP', optimalMin: 0, optimalMax: 3.0, unit: 'mg/L', type: 'blood',
     lowAlert: '', highAlert: 'Laaggradige ontsteking - belemmert vetverbranding',
     lowActions: [],
-    highActions: ['Omega-3 (2000mg EPA+DHA)', 'Curcumine 500mg (met piperine)', 'Anti-inflammatoir dieet', 'Check darmgezondheid (ontlastingstest)']
+    highActions: ['3-10 mg/L: LGI → Omega-3 2000mg EPA+DHA, curcumine 500mg, anti-inflammatoir dieet', '10-40 mg/L: auto-immuun/viraal → uitgebreid onderzoek', '>40 mg/L: infectie → verwijs huisarts']
   },
   {
     code: 'LEPT', name: 'Leptine', optimalMin: 4, optimalMax: 15, unit: 'ng/mL', type: 'blood',
@@ -506,16 +512,18 @@ export const LAB_REFERENCES: LabReference[] = [
     highActions: ['Anti-inflammatoir dieet (leptineresistentie is ontsteking-gedreven)', 'Omega-3 hoge dosering', 'Slaap optimaliseren (7-9u)', 'Intervalvasten (verlaagt leptine)']
   },
   {
-    code: 'B12', name: 'Vitamine B12', optimalMin: 300, optimalMax: 900, unit: 'pmol/L', type: 'blood',
-    lowAlert: 'B12 tekort - vermoeidheid, neurologisch risico',
+    // Orthomoleculair optimaal: ≥250 pmol/L (Pruimboom); 148–250 = grijze zone → test MMA/Holo-TC
+    code: 'B12', name: 'Vitamine B12', optimalMin: 250, optimalMax: 900, unit: 'pmol/L', type: 'blood',
+    lowAlert: 'B12 tekort - vermoeidheid, neurologisch risico; 148-250 pmol/L = grijze zone → test MMA',
     highAlert: '',
-    lowActions: ['Methylcobalamine 1000-5000µg sublinguaal', 'Check homocysteïne', 'Bij metformine: altijd suppleren'],
+    lowActions: ['Methylcobalamine 1000-5000µg sublinguaal', 'Check homocysteïne + MMA bij 148-250 pmol/L', 'Bij metformine: altijd suppleren'],
     highActions: []
   },
   {
+    // Orthomoleculair optimaal: <10 µmol/L (ideaal <7-8); verhoogd = methyleringsdefect
     code: 'HCY', name: 'Homocysteïne', optimalMin: 5, optimalMax: 10, unit: 'µmol/L', type: 'blood',
     lowAlert: '',
-    highAlert: 'Verhoogd homocysteïne - methyleringsdefect + cardiovasculair risico',
+    highAlert: 'Verhoogd homocysteïne - methyleringsdefect + cardiovasculair/neurodegeneratief risico',
     lowActions: [],
     highActions: ['Methylfolaat 400-800µg', 'Methylcobalamine 1000µg', 'B6 (P5P) 25-50mg', 'Retest na 3 maanden']
   },
@@ -525,6 +533,142 @@ export const LAB_REFERENCES: LabReference[] = [
     highAlert: '',
     lowActions: ['Magnesium bisglycinaat 400-600mg/dag', 'Avond innemen (slaapkwaliteit)', 'Magnesiumrijke voeding: noten, zaden, bladgroente'],
     highActions: []
+  },
+
+  // === BLOED — METABOLISME & LIPIDEN ===
+  {
+    // Orthomoleculair: >5.6 = signaal voor leefstijlinterventie; >7.0 = diabetes
+    code: 'GLUC', name: 'Glucose (nuchter)', optimalMin: 4.4, optimalMax: 5.6, unit: 'mmol/L', type: 'blood',
+    lowAlert: 'Hypoglykemie - check maaltijdpatroon en insuline',
+    highAlert: 'Verhoogde nuchtere glucose - insulineresistentie/prediabetes',
+    lowActions: ['Check maaltijdfrequentie', 'Overweeg insulinemeting'],
+    highActions: ['5.6-7.0: prediabetes → intervalvasten, koolhydraatrestrictie', '>7.0: verwijs huisarts (diabetes)', 'Berberine 500mg 2x/dag overwegen']
+  },
+  {
+    // Orthomoleculair: <1.7 mmol/L functioneel optimaal; hoge TG = koolhydraatintolerantie
+    code: 'TG', name: 'Triglyceriden', optimalMin: 0.34, optimalMax: 1.7, unit: 'mmol/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Hoge triglyceriden - koolhydraatintolerantie of leververvetting',
+    lowActions: [],
+    highActions: ['Koolhydraatrestrictie (<100g/dag)', 'Omega-3 2000mg EPA+DHA', 'Intervalvasten', 'Check HOMA-IR en leverwaarden']
+  },
+  {
+    // Orthomoleculair: >1.5 mmol/L optimaal (OrthoKennis strengere streefwaarde)
+    code: 'HDL', name: 'HDL-cholesterol', optimalMin: 1.5, optimalMax: 99, unit: 'mmol/L', type: 'blood',
+    lowAlert: 'Laag HDL - verhoogd cardiovasculair en metabolisch risico',
+    highAlert: '',
+    lowActions: ['Omega-3 2000mg EPA+DHA', 'Matige aerobe beweging (≥150 min/week)', 'Stoppen met roken', 'Verminder geraffineerde koolhydraten']
+  },
+  {
+    // OrthoKennis: <3.0 mmol/L traditionele risicomarker
+    code: 'LDL', name: 'LDL-cholesterol', optimalMin: 0, optimalMax: 3.0, unit: 'mmol/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Verhoogd LDL - cardiovasculair risico; check TG/HDL ratio voor partikelgrootte',
+    lowActions: [],
+    highActions: ['Anti-inflammatoir dieet', 'Check TG/HDL ratio (small dense LDL bij hoge TG)', 'Bij >5.0: verwijs huisarts', 'Bij >8.0: uitsluiten familiaire hypercholesterolemie']
+  },
+  {
+    // OrthoKennis: <5.0 mmol/L optimaal; >8.0 = mogelijk FH
+    code: 'CHOL', name: 'Totaal Cholesterol', optimalMin: 0, optimalMax: 5.0, unit: 'mmol/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Verhoogd totaal cholesterol - gebruik ratio\'s (TC/HDL, TG/HDL) voor risicobepaling',
+    lowActions: [],
+    highActions: ['Bereken TC/HDL ratio (streef <3.6)', 'Anti-inflammatoir dieet', 'Bij >8.0: uitsluiten FH']
+  },
+
+  // === BLOED — LEVER ===
+  {
+    // Orthomoleculair: <50 U/L (Pruimboom); gevoeligste specifieke levermarker
+    code: 'ALAT', name: 'ALAT (leverfunctie)', optimalMin: 0, optimalMax: 50, unit: 'U/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Verhoogd ALAT - leverbelasting of leververvetting (NAFLD)',
+    lowActions: [],
+    highActions: ['Check ASAT en GGT', 'Fatty Liver Index berekenen (BMI + tailleomtrek + TG + GGT)', 'Elimineer alcohol, fructose, verwerkt voedsel', 'Choline 500mg, NAC 600mg overwegen']
+  },
+  {
+    // Standaard: <35 U/L; verhoogd bij levercel- of spierschade
+    code: 'ASAT', name: 'ASAT (leverfunctie)', optimalMin: 0, optimalMax: 35, unit: 'U/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Verhoogd ASAT - lever- of spierschade',
+    lowActions: [],
+    highActions: ['Check ALAT (ASAT/ALAT ratio <2 = lever; >2 = alcohol of spier)', 'Bij CK normaal: lever als oorzaak']
+  },
+  {
+    // Orthomoleculair: <60 U/L (Pruimboom); gevoeligste marker voor galstuwing en oxidatieve stress
+    code: 'GGT', name: 'Gamma-GT', optimalMin: 0, optimalMax: 60, unit: 'U/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Verhoogd GGT - galstuwing, alcohol, oxidatieve stress (glutathion-verbruik)',
+    lowActions: [],
+    highActions: ['Elimineer alcohol', 'NAC 600mg 2x/dag (glutathion-precursor)', 'Check ALAT, bilirubine', 'Anti-oxidant protocol overwegen']
+  },
+  {
+    // Standaard: 40–130 U/L; galwegen of botombouw
+    code: 'ALP', name: 'ALP (Alkalische Fosfatase)', optimalMin: 40, optimalMax: 130, unit: 'U/L', type: 'blood',
+    lowAlert: 'Laag ALP - mogelijk zink- of magnesiumtekort',
+    highAlert: 'Hoog ALP - galweg- of botproblematiek',
+    lowActions: ['Check zink en magnesium'],
+    highActions: ['Check GGT (galwegen) en botmarkers', 'Verwijs bij persistent verhoogd']
+  },
+
+  // === BLOED — NIER & BLOED ===
+  {
+    code: 'CREA', name: 'Creatinine + eGFR', optimalMin: 50, optimalMax: 110, unit: 'µmol/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Verhoogd creatinine - nierfunctie controleren (eGFR <60 = nierschade)',
+    lowActions: [],
+    highActions: ['Bereken eGFR', 'Bij eGFR <60: verwijs huisarts', 'Hydratatie optimaliseren']
+  },
+  {
+    code: 'HB', name: 'Hemoglobine', optimalMin: 7.5, optimalMax: 10.5, unit: 'mmol/L', type: 'blood',
+    lowAlert: 'Anemie - vermoeidheid belemmert gewichtsverlies',
+    highAlert: '',
+    lowActions: ['Check ferritine, MCV, B12 en folaat', 'Microcytair (MCV<80): ijzertekort', 'Macrocytair (MCV>100): B12/folaat'],
+    highActions: []
+  },
+  {
+    code: 'MCV', name: 'MCV', optimalMin: 80, optimalMax: 100, unit: 'fL', type: 'blood',
+    lowAlert: 'Microcytaire anemie - ijzertekort',
+    highAlert: 'Macrocytaire anemie - B12 of folaat tekort',
+    lowActions: ['Check ferritine, transferrine', 'IJzerbisglyceinaat 25-50mg'],
+    highActions: ['Check B12, folaat, homocysteïne', 'Methylcobalamine suppletie']
+  },
+
+  // === BLOED — MINERALEN ===
+  {
+    // Orthomoleculair: plasma 10–18 µmol/L (Pruimboom & OrthoKennis overlap)
+    code: 'ZN', name: 'Zink (plasma)', optimalMin: 10, optimalMax: 18, unit: 'µmol/L', type: 'blood',
+    lowAlert: 'Zinktekort - beïnvloedt schildklier, immuun en insulinefunctie',
+    highAlert: '',
+    lowActions: ['Zink bisglycinaat 25mg/dag', 'Neem niet tegelijk met ijzer', 'Voedingsbronnen: pompoenpitten, vlees, schaal- en schelpdieren'],
+    highActions: []
+  },
+
+  // === BLOED — VITAMINEN ===
+  {
+    // Orthomoleculair: 10–42.4 nmol/L (Pruimboom); noodzakelijk voor homocysteïneafbraak
+    code: 'FOL', name: 'Folaat (B11)', optimalMin: 10, optimalMax: 42.4, unit: 'nmol/L', type: 'blood',
+    lowAlert: 'Folaattekort - methylering en DNA-synthese gestoord',
+    highAlert: '',
+    lowActions: ['Methylfolaat 400-800µg/dag', 'Check homocysteïne en B12', 'Bladgroenten verhogen in dieet'],
+    highActions: []
+  },
+
+  // === BLOED — IJZERSTATUS ===
+  {
+    // OrthoKennis: 15–45% (NIEUW); >55% = hemochromatose
+    code: 'TSAT', name: 'Transferrinesaturatie', optimalMin: 15, optimalMax: 45, unit: '%', type: 'blood',
+    lowAlert: 'Lage transferrinesaturatie - functioneel ijzertekort (ook bij normaal ferritine)',
+    highAlert: 'Hoge transferrinesaturatie - mogelijke ijzerstapeling of hemochromatose',
+    lowActions: ['Combineer met ferritine en Hb', 'IJzersuppletie indien ook ferritine <30'],
+    highActions: ['Bij >55%: uitsluiten hemochromatose (HFE-gen)', 'Verwijs huisarts']
+  },
+  {
+    // OrthoKennis: 2–4 g/L; stijgt bij ijzertekort
+    code: 'TRANSF', name: 'Transferrine', optimalMin: 2, optimalMax: 4, unit: 'g/L', type: 'blood',
+    lowAlert: '',
+    highAlert: 'Hoog transferrine - compensatie voor ijzertekort',
+    lowActions: [],
+    highActions: ['Combineer met ferritine en TSat']
   },
 
   // === ONTLASTING ===

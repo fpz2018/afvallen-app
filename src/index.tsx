@@ -778,7 +778,7 @@ app.patch('/api/lab-tests/:id/results', async (c) => {
     .update({
       results: body.results,
       interpretations,
-      result_date: new Date().toISOString().split('T')[0],
+      result_date: body.result_date || new Date().toISOString().split('T')[0],
       status: 'completed'
     })
     .eq('id', labId)
@@ -2514,6 +2514,8 @@ app.get('/admin/patient/:id', (c) => {
             html += '<div class="border rounded-lg p-3 mb-3"><div class="flex items-center justify-between mb-2"><span class="font-semibold text-sm">'+lab.test_package+'</span><div class="flex items-center gap-2"><span class="text-xs text-gray-400">'+new Date(lab.created_at).toLocaleDateString('nl-NL')+'</span><span class="px-2 py-1 rounded-full text-xs font-semibold '+statusBadge+'">'+statusLabel+'</span></div></div>';
             if (lab.status === 'recommended' || lab.status === 'ordered') {
               html += '<a href="/admin/lab-entry/'+patientId+'/'+lab.id+'" class="text-sm text-blue-600 hover:text-blue-800 font-semibold"><i class="fas fa-edit mr-1"></i>Resultaten invoeren</a>';
+            } else if (lab.status === 'completed') {
+              html += '<a href="/admin/lab-entry/'+patientId+'/'+lab.id+'" class="text-sm text-amber-600 hover:text-amber-800 font-semibold"><i class="fas fa-pen mr-1"></i>Resultaten wijzigen</a>';
             }
             if (lab.status === 'completed' && lab.interpretations?.length) {
               html += '<div class="mt-2 space-y-2">';
@@ -2535,7 +2537,24 @@ app.get('/admin/patient/:id', (c) => {
                   }
                 }
                 // Visual range bar
-                const refRanges = {TSH:{min:0.4,max:2.5,absMax:8},fT4:{min:12,max:22,absMax:35},fT3:{min:4.0,max:6.5,absMax:10},INS:{min:2,max:6,absMax:25},HOMA:{min:0.5,max:2.0,absMax:5},CORT:{min:250,max:700,absMax:1200},FER:{min:30,max:100,absMax:500},VITD:{min:75,max:125,absMax:250},COQ10:{min:0.5,max:1.5,absMax:3},HBA1C:{min:4.0,max:5.6,absMax:12},CRP:{min:0,max:1.0,absMax:10},GLUC:{min:3.9,max:5.5,absMax:15},CHOL:{min:0,max:5.0,absMax:10},HDL:{min:1.0,max:99,absMax:99},LDL:{min:0,max:3.0,absMax:8},TG:{min:0,max:1.7,absMax:5},B12:{min:300,max:900,absMax:1500},HCY:{min:5,max:10,absMax:30},LEPT:{min:4,max:15,absMax:50},MG_RBC:{min:2.0,max:2.6,absMax:4},CALPRO:{min:0,max:50,absMax:500},ZONULIN:{min:0,max:107,absMax:300},PE1:{min:200,max:10000,absMax:10000},SIGA:{min:510,max:2040,absMax:3000},SCFA:{min:70,max:150,absMax:250},BGLUC:{min:0,max:1000,absMax:3000}};
+                const refRanges = {
+                  TSH:{min:0.4,max:2.0,absMax:8},fT4:{min:12,max:25,absMax:35},fT3:{min:3.6,max:6.5,absMax:10},
+                  INS:{min:2,max:6,absMax:25},HOMA:{min:0.5,max:2.0,absMax:5},CORT:{min:250,max:700,absMax:1200},
+                  FER:{min:30,max:100,absMax:500},VITD:{min:75,max:150,absMax:250},COQ10:{min:0.5,max:1.5,absMax:3},
+                  HBA1C:{min:4.0,max:5.4,absMax:12},CRP:{min:0,max:3.0,absMax:40},
+                  GLUC:{min:4.4,max:5.6,absMax:15},CHOL:{min:0,max:5.0,absMax:10},
+                  HDL:{min:1.5,max:99,absMax:99},LDL:{min:0,max:3.0,absMax:8},TG:{min:0.34,max:1.7,absMax:5},
+                  B12:{min:250,max:900,absMax:1500},HCY:{min:5,max:10,absMax:30},
+                  LEPT:{min:4,max:15,absMax:50},MG_RBC:{min:2.0,max:2.6,absMax:4},
+                  ZN:{min:10,max:18,absMax:30},FOL:{min:10,max:42.4,absMax:80},
+                  ALAT:{min:0,max:50,absMax:200},ASAT:{min:0,max:35,absMax:200},GGT:{min:0,max:60,absMax:300},
+                  ALP:{min:40,max:130,absMax:300},CREA:{min:50,max:110,absMax:250},
+                  HB:{min:7.5,max:10.5,absMax:15},MCV:{min:80,max:100,absMax:130},
+                  TSAT:{min:15,max:45,absMax:100},TRANSF:{min:2,max:4,absMax:8},
+                  CALPRO:{min:0,max:50,absMax:500},ZONULIN:{min:0,max:107,absMax:300},
+                  PE1:{min:200,max:10000,absMax:10000},SIGA:{min:510,max:2040,absMax:3000},
+                  SCFA:{min:70,max:150,absMax:250},BGLUC:{min:0,max:1000,absMax:3000}
+                };
                 const ref = refRanges[interp.code];
                 let rangeBar = '';
                 if (ref) {
@@ -2993,29 +3012,47 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
     const labId = '${labId}';
 
     const refRanges = {
-      // Bloed
-      TSH:{unit:'mU/L',min:0.4,max:2.5},fT4:{unit:'pmol/L',min:12,max:22},fT3:{unit:'pmol/L',min:4.0,max:6.5},
+      // Bloed — Schildklier (orthomoleculaire waarden Pruimboom/OrthoKennis)
+      TSH:{unit:'mU/L',min:0.4,max:2.0},fT4:{unit:'pmol/L',min:12,max:25},fT3:{unit:'pmol/L',min:3.6,max:6.5},
+      // Bloed — Hormonen & stress
       INS:{unit:'mU/L',min:2,max:6},HOMA:{unit:'',min:0.5,max:2.0},CORT:{unit:'nmol/L',min:250,max:700},
-      FER:{unit:'µg/L',min:30,max:100},VITD:{unit:'nmol/L',min:75,max:125},COQ10:{unit:'µmol/L',min:0.5,max:1.5},
-      HBA1C:{unit:'%',min:4.0,max:5.6},CRP:{unit:'mg/L',min:0,max:1.0},GLUC:{unit:'mmol/L',min:3.9,max:5.5},
-      CHOL:{unit:'mmol/L',min:0,max:5.0},HDL:{unit:'mmol/L',min:1.0,max:99},LDL:{unit:'mmol/L',min:0,max:3.0},
-      TG:{unit:'mmol/L',min:0,max:1.7},B12:{unit:'pmol/L',min:300,max:900},HCY:{unit:'µmol/L',min:5,max:10},
-      LEPT:{unit:'ng/mL',min:4,max:15},MG_RBC:{unit:'mmol/L',min:2.0,max:2.6},
-      ALAT:{unit:'U/L',min:0,max:35},ASAT:{unit:'U/L',min:0,max:35},GGT:{unit:'U/L',min:0,max:40},
-      HB:{unit:'mmol/L',min:7.5,max:10.0},MCV:{unit:'fL',min:80,max:100},CREA:{unit:'µmol/L',min:50,max:100},
-      DHEAS:{unit:'µmol/L',min:2.5,max:10},TESTO:{unit:'nmol/L',min:0.3,max:2.0},
-      SHBG:{unit:'nmol/L',min:30,max:120},SE:{unit:'µg/L',min:70,max:150},ZN:{unit:'µmol/L',min:11,max:18},
-      CR:{unit:'nmol/L',min:1.5,max:7.0},CK:{unit:'U/L',min:25,max:200},FOL:{unit:'nmol/L',min:10,max:45},
+      DHEAS:{unit:'µmol/L',min:2.5,max:10},TESTO:{unit:'nmol/L',min:0.3,max:2.0},SHBG:{unit:'nmol/L',min:30,max:120},
+      LEPT:{unit:'ng/mL',min:4,max:15},
+      // Bloed — Metabolisme & glucose
+      GLUC:{unit:'mmol/L',min:4.4,max:5.6},HBA1C:{unit:'%',min:4.0,max:5.4},HOMA:{unit:'',min:0.5,max:2.0},
+      // Bloed — Lipiden
+      CHOL:{unit:'mmol/L',min:0,max:5.0},HDL:{unit:'mmol/L',min:1.5,max:99},LDL:{unit:'mmol/L',min:0,max:3.0},
+      TG:{unit:'mmol/L',min:0.34,max:1.7},TG_HDL:{unit:'ratio',min:0,max:2.0},
+      // Bloed — Ontsteking
+      CRP:{unit:'mg/L',min:0,max:3.0},FER:{unit:'µg/L',min:30,max:100},
+      // Bloed — Lever
+      ALAT:{unit:'U/L',min:0,max:50},ASAT:{unit:'U/L',min:0,max:35},GGT:{unit:'U/L',min:0,max:60},
+      ALP:{unit:'U/L',min:40,max:130},
+      // Bloed — Nier & bloed
+      CREA:{unit:'µmol/L',min:50,max:110},HB:{unit:'mmol/L',min:7.5,max:10.5},MCV:{unit:'fL',min:80,max:100},
+      // Bloed — IJzerstatus
+      TSAT:{unit:'%',min:15,max:45},TRANSF:{unit:'g/L',min:2,max:4},
+      // Bloed — Vitaminen & methylering
+      VITD:{unit:'nmol/L',min:75,max:150},COQ10:{unit:'µmol/L',min:0.5,max:1.5},
+      B12:{unit:'pmol/L',min:250,max:900},HCY:{unit:'µmol/L',min:5,max:10},
+      FOL:{unit:'nmol/L',min:10,max:42.4},
+      // Bloed — Mineralen
+      MG_RBC:{unit:'mmol/L',min:2.0,max:2.6},ZN:{unit:'µmol/L',min:10,max:18},
+      SE:{unit:'µg/L',min:70,max:150},CR:{unit:'nmol/L',min:1.5,max:7.0},
+      // Bloed — Overig
+      CK:{unit:'U/L',min:25,max:200},
       // Ontlasting
       CALPRO:{unit:'µg/g',min:0,max:50},ZONULIN:{unit:'ng/mL',min:0,max:107},
       PE1:{unit:'µg/g',min:200,max:10000},SIGA:{unit:'µg/mL',min:510,max:2040},
       SCFA:{unit:'µmol/g',min:70,max:150},BGLUC:{unit:'U/mL',min:0,max:1000},
     };
 
-    function renderTestInput(t, ref) {
+    function renderTestInput(t, ref, existingValue) {
       const typeIcon = t.type==='stool'?'<i class="fas fa-vial text-amber-500 mr-1"></i>':t.type==='urine'?'<i class="fas fa-tint text-yellow-500 mr-1"></i>':t.type==='saliva'?'<i class="fas fa-tint text-blue-400 mr-1"></i>':'<i class="fas fa-tint text-red-400 mr-1"></i>';
       const bgClass = t.type==='stool'?'bg-amber-50/50':t.type==='urine'?'bg-yellow-50/30':'';
-      return '<div class="flex items-center gap-4 border-b pb-3 '+bgClass+' p-2 rounded"><div class="flex-1"><label class="block text-sm font-semibold text-gray-700">'+typeIcon+t.name+'</label>'+(ref?'<span class="text-xs text-gray-400">Optimaal: '+ref.min+' - '+ref.max+' '+ref.unit+'</span>':'<span class="text-xs text-gray-300">Geen referentie</span>')+(t.note?'<span class="text-xs text-blue-500 block">'+t.note+'</span>':'')+(t.rationale?'<span class="text-xs text-gray-400 block italic">'+t.rationale.substring(0,80)+'...</span>':'')+'</div><div class="w-40"><input name="'+t.code+'" type="number" step="0.01" class="w-full border rounded px-3 py-2 text-right" placeholder="Waarde"></div><span class="text-sm text-gray-400 w-20">'+(ref?ref.unit:'')+'</span></div>';
+      const valAttr = existingValue!=null?' value="'+existingValue+'"':'';
+      const filledClass = existingValue!=null?' border-blue-300 bg-blue-50':'';
+      return '<div class="flex items-center gap-4 border-b pb-3 '+bgClass+' p-2 rounded"><div class="flex-1"><label class="block text-sm font-semibold text-gray-700">'+typeIcon+t.name+'</label>'+(ref?'<span class="text-xs text-gray-400">Optimaal: '+ref.min+' – '+ref.max+' '+ref.unit+'</span>':'<span class="text-xs text-gray-300">Geen referentie</span>')+(t.note?'<span class="text-xs text-blue-500 block">'+t.note+'</span>':'')+(t.rationale?'<span class="text-xs text-gray-400 block italic">'+t.rationale.substring(0,80)+'...</span>':'')+'</div><div class="w-40"><input name="'+t.code+'" type="number" step="0.01" class="w-full border rounded px-3 py-2 text-right'+filledClass+'" placeholder="Waarde"'+valAttr+'></div><span class="text-sm text-gray-400 w-20">'+(ref?ref.unit:'')+'</span></div>';
     }
 
     async function loadLabForm() {
@@ -3025,13 +3062,30 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
         const lab = labs.find(l=>l.id===labId);
         if(!lab) { document.getElementById('lab-form-container').innerHTML='<p class="text-red-500">Lab test niet gevonden</p>'; return; }
 
+        const isEdit = lab.status === 'completed' && lab.results;
+        const existingResults = lab.results || {};
+        const defaultDate = lab.result_date || new Date().toISOString().split('T')[0];
+
+        // Pas paginatitel aan bij bewerken
+        if (isEdit) {
+          document.querySelector('h2').innerHTML = '<i class="fas fa-edit mr-2"></i>Lab-resultaten Wijzigen';
+        }
+
         const allTests = lab.recommended_tests || [];
         const bloodTests = allTests.filter(t=>t.type==='blood'||!t.type);
         const stoolTests = allTests.filter(t=>t.type==='stool');
         const otherTests = allTests.filter(t=>t.type&&!['blood','stool'].includes(t.type));
 
         let html = '<form onsubmit="submitResults(event)" class="space-y-6">';
-        html += '<div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded"><p class="text-sm text-blue-700"><i class="fas fa-info-circle mr-1"></i>Voer alleen de waarden in die beschikbaar zijn. De <strong>optimale</strong> range wordt getoond (niet de standaard lab referentie).</p></div>';
+
+        if (isEdit) {
+          html += '<div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded"><p class="text-sm text-amber-700"><i class="fas fa-edit mr-1"></i>U bewerkt bestaande labresultaten. Bestaande waarden zijn vooringevuld. Lege velden worden <strong>niet</strong> overschreven.</p></div>';
+        } else {
+          html += '<div class="bg-blue-50 border-l-4 border-blue-500 p-4 rounded"><p class="text-sm text-blue-700"><i class="fas fa-info-circle mr-1"></i>Voer alleen de waarden in die beschikbaar zijn. De <strong>optimale</strong> range wordt getoond (niet de standaard lab referentie).</p></div>';
+        }
+
+        // Datum van labresultaten
+        html += '<div class="bg-gray-50 border rounded-lg p-4 flex items-center gap-4"><label class="font-semibold text-sm text-gray-700 w-48"><i class="far fa-calendar mr-2 text-blue-500"></i>Datum labresultaten</label><input type="date" name="_result_date" id="result-date-input" value="'+defaultDate+'" class="border rounded px-3 py-2 text-sm"><span class="text-xs text-gray-400 ml-2">Vul de werkelijke datum van de labuitslag in</span></div>';
 
         // BLOED
         if (bloodTests.length) {
@@ -3040,12 +3094,12 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
           html += '<div><h3 class="font-bold text-lg flex items-center mb-3"><i class="fas fa-tint mr-2 text-red-500"></i>Bloedonderzoek ('+bloodTests.length+' testen)</h3>';
           if (reqBlood.length) {
             html += '<h4 class="text-sm font-semibold text-gray-600 mb-2">Verplicht ('+reqBlood.length+')</h4><div class="space-y-2">';
-            reqBlood.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            reqBlood.forEach(t => { html += renderTestInput(t, refRanges[t.code], existingResults[t.code]!=null?existingResults[t.code]:null); });
             html += '</div>';
           }
           if (optBlood.length) {
-            html += '<details class="mt-4"><summary class="cursor-pointer text-sm font-semibold text-gray-600 hover:text-gray-800 mb-2"><i class="far fa-circle mr-1"></i>Optioneel ('+optBlood.length+') - klik om te tonen</summary><div class="space-y-2">';
-            optBlood.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            html += '<details class="mt-4"'+(isEdit?' open':'')+'><summary class="cursor-pointer text-sm font-semibold text-gray-600 hover:text-gray-800 mb-2"><i class="far fa-circle mr-1"></i>Optioneel ('+optBlood.length+') - klik om te tonen</summary><div class="space-y-2">';
+            optBlood.forEach(t => { html += renderTestInput(t, refRanges[t.code], existingResults[t.code]!=null?existingResults[t.code]:null); });
             html += '</div></details>';
           }
           html += '</div>';
@@ -3059,12 +3113,12 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
           html += '<div class="bg-amber-50 border-l-4 border-amber-500 p-3 rounded mb-3 text-sm text-amber-800"><i class="fas fa-info-circle mr-1"></i>Ontlastingsonderzoek wordt door gespecialiseerd lab verwerkt. Resultaten kunnen 1-2 weken duren.</div>';
           if (reqStool.length) {
             html += '<h4 class="text-sm font-semibold text-gray-600 mb-2">Verplicht ('+reqStool.length+')</h4><div class="space-y-2">';
-            reqStool.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            reqStool.forEach(t => { html += renderTestInput(t, refRanges[t.code], existingResults[t.code]!=null?existingResults[t.code]:null); });
             html += '</div>';
           }
           if (optStool.length) {
-            html += '<details class="mt-4"><summary class="cursor-pointer text-sm font-semibold text-gray-600 hover:text-gray-800 mb-2"><i class="far fa-circle mr-1"></i>Optioneel ('+optStool.length+')</summary><div class="space-y-2">';
-            optStool.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+            html += '<details class="mt-4"'+(isEdit?' open':'')+'><summary class="cursor-pointer text-sm font-semibold text-gray-600 hover:text-gray-800 mb-2"><i class="far fa-circle mr-1"></i>Optioneel ('+optStool.length+')</summary><div class="space-y-2">';
+            optStool.forEach(t => { html += renderTestInput(t, refRanges[t.code], existingResults[t.code]!=null?existingResults[t.code]:null); });
             html += '</div></details>';
           }
           html += '</div>';
@@ -3073,7 +3127,7 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
         // OVERIG
         if (otherTests.length) {
           html += '<div class="border-t pt-6"><h3 class="font-bold text-lg flex items-center mb-3"><i class="fas fa-microscope mr-2 text-purple-600"></i>Overig ('+otherTests.length+' testen)</h3><div class="space-y-2">';
-          otherTests.forEach(t => { html += renderTestInput(t, refRanges[t.code]); });
+          otherTests.forEach(t => { html += renderTestInput(t, refRanges[t.code], existingResults[t.code]!=null?existingResults[t.code]:null); });
           html += '</div></div>';
         }
 
@@ -3089,7 +3143,11 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
       e.preventDefault();
       const formData = new FormData(e.target);
       const results = {};
-      for(const [key,val] of formData) { if(val) results[key] = parseFloat(val); }
+      let resultDate = null;
+      for(const [key,val] of formData) {
+        if(key === '_result_date') { resultDate = val; continue; }
+        if(val) results[key] = parseFloat(val);
+      }
       if(!Object.keys(results).length) { alert('Voer minimaal één waarde in'); return; }
 
       const btn = e.target.querySelector('button[type=submit]');
@@ -3097,9 +3155,11 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
       btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Verwerken...';
 
       try {
+        const payload = {results};
+        if(resultDate) payload.result_date = resultDate;
         const res = await fetch('/api/lab-tests/'+labId+'/results', {
           method:'PATCH', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({results})
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         if(!res.ok) { alert('Fout: '+(data.error||'Onbekend')); btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-2"></i>Opslaan & Interpreteer'; return; }
