@@ -164,10 +164,39 @@ async function resetRateLimit(ip: string, c: any): Promise<void> {
 async function getSessionUser(c: any): Promise<{ valid: boolean, email: string }> {
   const token = getCookie(c, 'admin_session')
   if (!token) return { valid: false, email: '' }
+
   const db = getSupabase(getEnv(c))
   const { data, error } = await db.auth.getUser(token)
-  if (error || !data.user) return { valid: false, email: '' }
-  return { valid: true, email: data.user.email || '' }
+
+  if (!error && data.user) {
+    return { valid: true, email: data.user.email || '' }
+  }
+
+  // Access token verlopen — probeer te vernieuwen via refresh token
+  const refreshToken = getCookie(c, 'admin_refresh')
+  if (!refreshToken) return { valid: false, email: '' }
+
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
+  const refreshResponse = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+    body: JSON.stringify({ refresh_token: refreshToken })
+  })
+
+  if (!refreshResponse.ok) return { valid: false, email: '' }
+
+  const refreshData = await refreshResponse.json() as any
+  if (!refreshData.access_token) return { valid: false, email: '' }
+
+  // Nieuwe tokens instellen in cookies
+  setCookie(c, 'admin_session', refreshData.access_token, {
+    httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
+  })
+  setCookie(c, 'admin_refresh', refreshData.refresh_token, {
+    httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 30 * 86400
+  })
+
+  return { valid: true, email: refreshData.user?.email || '' }
 }
 
 function getClientIP(c: any): string {
@@ -225,6 +254,7 @@ app.post('/api/admin/login', async (c) => {
       token: pendingToken,
       email: data.user.email,
       supabase_token: data.access_token,
+      supabase_refresh_token: data.refresh_token,
       expires_at: expiresAt
     })
 
@@ -235,10 +265,13 @@ app.post('/api/admin/login', async (c) => {
     })
   }
 
-  // Geen 2FA — direct inloggen met Supabase access_token als sessie cookie
+  // Geen 2FA — direct inloggen met Supabase tokens als cookies
   await resetRateLimit(ip, c)
   setCookie(c, 'admin_session', data.access_token, {
     httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
+  })
+  setCookie(c, 'admin_refresh', data.refresh_token, {
+    httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 30 * 86400
   })
 
   return c.json({ success: true, email: data.user?.email, has_2fa: false })
@@ -368,11 +401,14 @@ app.post('/api/admin/verify-2fa', async (c) => {
     return c.json({ error: 'Ongeldige verificatiecode', remaining: rateCheck.remaining }, 401)
   }
 
-  // 2FA gelukt — Supabase token als sessie cookie instellen
+  // 2FA gelukt — Supabase tokens als cookies instellen
   await db.from('pending_2fa').delete().eq('token', pending_token)
   await resetRateLimit(ip, c)
   setCookie(c, 'admin_session', pending.supabase_token, {
     httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
+  })
+  setCookie(c, 'admin_refresh', pending.supabase_refresh_token, {
+    httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 30 * 86400
   })
 
   return c.json({ success: true, email: pending.email })
@@ -457,6 +493,7 @@ app.get('/api/admin/2fa/status', async (c) => {
 // Logout
 app.post('/api/admin/logout', (c) => {
   deleteCookie(c, 'admin_session', { path: '/' })
+  deleteCookie(c, 'admin_refresh', { path: '/' })
   return c.json({ success: true })
 })
 
