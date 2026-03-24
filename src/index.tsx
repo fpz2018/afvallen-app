@@ -6,6 +6,7 @@ import { getSupabase } from './lib/supabase'
 import { classifyPatient, TriageResponses } from './lib/classification'
 import { getLabRecommendations, interpretLabResults, generateRiskProfile } from './lib/lab-recommendations'
 import { generateProtocol } from './lib/protocol-engine'
+import { adjustProtocolFromLabResults, summarizeAdjustments } from './lib/lab-protocol-adjustments'
 import { validate, LoginSchema, ResetPasswordSchema, UpdatePasswordSchema, Verify2FASchema, Enable2FASchema, Disable2FASchema, CreatePatientSchema, UpdatePatientSchema, CreateAssessmentSchema, CreateProtocolSchema, CreateProgressSchema, CreateFollowUpSchema, UpdateFollowUpSchema } from './lib/schemas'
 
 type EnvVars = {
@@ -766,11 +767,13 @@ app.get('/api/lab-tests/:patientId', async (c) => {
 app.patch('/api/lab-tests/:id/results', async (c) => {
   const db = getSupabase(getEnv(c))
   const body = await c.req.json()
+  const labId = c.req.param('id')
 
   // Interpret results
   const interpretations = interpretLabResults(body.results)
 
-  const { data, error } = await db
+  // Sla labresultaten op
+  const { data: labData, error: labError } = await db
     .from('lab_tests')
     .update({
       results: body.results,
@@ -778,12 +781,35 @@ app.patch('/api/lab-tests/:id/results', async (c) => {
       result_date: new Date().toISOString().split('T')[0],
       status: 'completed'
     })
-    .eq('id', c.req.param('id'))
-    .select()
+    .eq('id', labId)
+    .select('patient_id')
     .single()
 
-  if (error) return c.json({ error: error.message }, 500)
-  return c.json({ labTest: data, interpretations })
+  if (labError) return c.json({ error: labError.message }, 500)
+
+  // Genereer protocol aanpassingen op basis van labresultaten
+  const adjustments = adjustProtocolFromLabResults(interpretations)
+  const summary = summarizeAdjustments(adjustments)
+
+  // Sla aanpassingen op in het actieve protocol van de patiënt
+  if (adjustments.length > 0 && labData?.patient_id) {
+    const { data: protocols } = await db
+      .from('supplement_protocols')
+      .select('id, lab_adjustments')
+      .eq('patient_id', labData.patient_id)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    if (protocols && protocols.length > 0) {
+      await db
+        .from('supplement_protocols')
+        .update({ lab_adjustments: adjustments })
+        .eq('id', protocols[0].id)
+    }
+  }
+
+  return c.json({ interpretations, adjustments, summary })
 })
 
 // =====================================================
@@ -3066,15 +3092,94 @@ app.get('/admin/lab-entry/:patientId/:labId', (c) => {
       for(const [key,val] of formData) { if(val) results[key] = parseFloat(val); }
       if(!Object.keys(results).length) { alert('Voer minimaal één waarde in'); return; }
 
+      const btn = e.target.querySelector('button[type=submit]');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Verwerken...';
+
       try {
         const res = await fetch('/api/lab-tests/'+labId+'/results', {
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({results})
         });
         const data = await res.json();
-        if(res.ok) { window.location.href = '/admin/patient/'+patientId; }
-        else alert('Fout: '+(data.error||'Onbekend'));
-      } catch(e) { alert('Fout: '+e.message); }
+        if(!res.ok) { alert('Fout: '+(data.error||'Onbekend')); btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-2"></i>Opslaan & Interpreteer'; return; }
+
+        // Toon aanpassingen inline
+        showAdjustments(data);
+      } catch(err) { alert('Fout: '+err.message); btn.disabled=false; btn.innerHTML='<i class="fas fa-save mr-2"></i>Opslaan & Interpreteer'; }
+    }
+
+    function showAdjustments(data) {
+      const { interpretations, adjustments, summary } = data;
+      const visibleAdj = adjustments.filter(a => a.message);
+
+      let html = '<div class="space-y-6">';
+
+      // Header
+      if (summary.hasUrgentAction) {
+        html += '<div class="bg-red-50 border border-red-300 rounded-xl p-4 flex items-start gap-3"><i class="fas fa-exclamation-triangle text-red-600 text-xl mt-1"></i><div><p class="font-bold text-red-800">Urgente actie vereist</p><p class="text-sm text-red-700">Er zijn kritieke afwijkingen gevonden die directe actie vereisen. Zie details hieronder.</p></div></div>';
+      }
+
+      // Interpretaties
+      html += '<div class="bg-white rounded-xl shadow"><div class="p-4 border-b flex items-center gap-2"><i class="fas fa-flask text-blue-600"></i><h3 class="font-bold text-lg">Labresultaten Interpretatie</h3></div><div class="p-4">';
+      if (!interpretations.length) {
+        html += '<p class="text-gray-500">Geen bekende waarden ingevoerd.</p>';
+      } else {
+        html += '<div class="space-y-2">';
+        interpretations.forEach(i => {
+          const statusColor = i.status === 'optimal' ? 'green' : i.status === 'high' ? 'red' : 'yellow';
+          const statusLabel = i.status === 'optimal' ? 'Optimaal' : i.status === 'high' ? 'Te hoog' : 'Te laag';
+          const statusIcon = i.status === 'optimal' ? 'fa-check-circle' : i.status === 'high' ? 'fa-arrow-up' : 'fa-arrow-down';
+          html += '<div class="flex items-center justify-between py-2 border-b last:border-0">';
+          html += '<div class="flex items-center gap-2"><span class="font-semibold text-sm">'+i.name+'</span>';
+          if (i.alert) html += '<span class="text-xs text-gray-500">— '+i.alert+'</span>';
+          html += '</div>';
+          html += '<div class="flex items-center gap-3">';
+          html += '<span class="font-bold text-sm">'+i.value+' '+i.unit+'</span>';
+          html += '<span class="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full bg-'+statusColor+'-100 text-'+statusColor+'-700"><i class="fas '+statusIcon+'"></i> '+statusLabel+'</span>';
+          html += '</div></div>';
+        });
+        html += '</div>';
+      }
+      html += '</div></div>';
+
+      // Protocol aanpassingen
+      if (visibleAdj.length > 0) {
+        html += '<div class="bg-white rounded-xl shadow"><div class="p-4 border-b flex items-center gap-2"><i class="fas fa-edit text-purple-600"></i><h3 class="font-bold text-lg">Aanbevolen Protocol Aanpassingen</h3><span class="ml-auto text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full font-semibold">'+visibleAdj.length+' aanpassingen</span></div><div class="p-4 space-y-4">';
+        visibleAdj.forEach(adj => {
+          const sevColor = adj.severity === 'critical' ? 'red' : adj.severity === 'significant' ? 'orange' : 'blue';
+          const sevLabel = adj.severity === 'critical' ? 'Kritiek' : adj.severity === 'significant' ? 'Significant' : 'Matig';
+          const typeIcon = adj.type === 'add_supplement' ? 'fa-plus-circle' : adj.type === 'increase_supplement' ? 'fa-arrow-up' : adj.type === 'referral' ? 'fa-user-md' : adj.type === 'nutrition' ? 'fa-carrot' : 'fa-info-circle';
+          html += '<div class="border border-'+sevColor+'-200 rounded-lg p-4 bg-'+sevColor+'-50">';
+          html += '<div class="flex items-start justify-between mb-2">';
+          html += '<div class="flex items-center gap-2"><i class="fas '+typeIcon+' text-'+sevColor+'-600"></i><span class="font-semibold text-'+sevColor+'-800">'+adj.labName+' ('+adj.labValue+' '+adj.unit+')</span></div>';
+          html += '<span class="text-xs font-bold px-2 py-1 rounded-full bg-'+sevColor+'-200 text-'+sevColor+'-800">'+sevLabel+'</span>';
+          html += '</div>';
+          html += '<p class="text-sm text-gray-800 mb-2">'+adj.message+'</p>';
+          if (adj.supplement) {
+            html += '<div class="bg-white rounded p-3 text-xs space-y-1 border border-'+sevColor+'-200">';
+            html += '<div class="flex gap-4"><span class="font-semibold text-gray-700">'+adj.supplement.name+'</span><span class="text-gray-600">'+adj.supplement.dosage+'</span></div>';
+            html += '<div class="text-gray-500">⏰ '+adj.supplement.timing+' &nbsp;|&nbsp; ⏳ '+adj.supplement.duration+'</div>';
+            html += '</div>';
+          }
+          if (adj.nutritionChange) {
+            html += '<div class="bg-white rounded p-3 text-xs text-gray-700 border border-'+sevColor+'-200 mt-2"><i class="fas fa-carrot mr-1 text-green-600"></i>'+adj.nutritionChange+'</div>';
+          }
+          if (adj.referralNote) {
+            html += '<div class="bg-white rounded p-3 text-xs font-semibold text-red-700 border border-red-300 mt-2"><i class="fas fa-user-md mr-1"></i>'+adj.referralNote+'</div>';
+          }
+          html += '</div>';
+        });
+        html += '</div></div>';
+      } else {
+        html += '<div class="bg-green-50 border border-green-200 rounded-xl p-4"><i class="fas fa-check-circle text-green-600 mr-2"></i><span class="text-green-800 font-semibold">Geen protocol aanpassingen nodig — alle ingevoerde waarden zijn optimaal.</span></div>';
+      }
+
+      html += '<div class="flex gap-4"><a href="/admin/patient/'+patientId+'" class="bg-primary-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-primary-700"><i class="fas fa-arrow-left mr-2"></i>Terug naar patiënt</a></div>';
+      html += '</div>';
+
+      document.getElementById('lab-form-container').innerHTML = html;
+      window.scrollTo(0,0);
     }
 
     loadLabForm();
@@ -3589,6 +3694,39 @@ app.get('/admin/protocol/:patientId/:protocolId', (c) => {
             html += '<div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded"><p class="font-bold text-yellow-800">'+m.recommendation+'</p><p class="text-sm text-yellow-700 mt-1"><strong>Dosering:</strong> '+m.dosage+'</p><p class="text-sm text-yellow-700"><strong>Monitoring:</strong> '+m.monitoring+'</p></div>';
           });
           html += '</div>';
+        }
+
+        // Lab-gebaseerde protocol aanpassingen
+        const labAdj = (Array.isArray(proto.lab_adjustments) ? proto.lab_adjustments : []).filter(a=>a.message);
+        if(labAdj.length) {
+          const hasCritical = labAdj.some(a=>a.severity==='critical');
+          html += '<div class="mb-6 border rounded-xl overflow-hidden">';
+          html += '<div class="flex items-center gap-2 p-4 '+(hasCritical?'bg-red-600':'bg-purple-600')+' text-white">';
+          html += '<i class="fas fa-flask"></i><h3 class="font-bold text-lg">5. Aanpassingen op basis van Labresultaten</h3>';
+          html += '<span class="ml-auto text-xs bg-white bg-opacity-20 px-2 py-1 rounded-full">'+labAdj.length+' aanpassingen</span></div>';
+          html += '<div class="p-4 space-y-3">';
+          labAdj.forEach(adj=>{
+            const sevColor = adj.severity==='critical'?'red':adj.severity==='significant'?'orange':'blue';
+            const sevLabel = adj.severity==='critical'?'Kritiek':adj.severity==='significant'?'Significant':'Matig';
+            const typeIcon = adj.type==='add_supplement'?'fa-plus-circle':adj.type==='increase_supplement'?'fa-arrow-up':adj.type==='referral'?'fa-user-md':adj.type==='nutrition'?'fa-carrot':'fa-info-circle';
+            html += '<div class="border border-'+sevColor+'-200 rounded-lg p-4 bg-'+sevColor+'-50">';
+            html += '<div class="flex items-start justify-between mb-2"><div class="flex items-center gap-2"><i class="fas '+typeIcon+' text-'+sevColor+'-600"></i><span class="font-semibold text-'+sevColor+'-800">'+adj.labName+' ('+adj.labValue+' '+adj.unit+')</span></div>';
+            html += '<span class="text-xs font-bold px-2 py-1 rounded-full bg-'+sevColor+'-200 text-'+sevColor+'-800">'+sevLabel+'</span></div>';
+            html += '<p class="text-sm text-gray-800 mb-2">'+adj.message+'</p>';
+            if(adj.supplement){
+              html += '<div class="bg-white rounded p-3 text-xs border border-'+sevColor+'-200">';
+              html += '<span class="font-semibold text-gray-700">'+adj.supplement.name+'</span> — <span class="text-gray-600">'+adj.supplement.dosage+'</span>';
+              html += '<div class="text-gray-500 mt-1">⏰ '+adj.supplement.timing+' &nbsp;|&nbsp; ⏳ '+adj.supplement.duration+'</div></div>';
+            }
+            if(adj.nutritionChange){
+              html += '<div class="bg-white rounded p-3 text-xs text-gray-700 border border-'+sevColor+'-200 mt-2"><i class="fas fa-carrot mr-1 text-green-600"></i>'+adj.nutritionChange+'</div>';
+            }
+            if(adj.referralNote){
+              html += '<div class="bg-white rounded p-3 text-xs font-semibold text-red-700 border border-red-300 mt-2"><i class="fas fa-user-md mr-1"></i>'+adj.referralNote+'</div>';
+            }
+            html += '</div>';
+          });
+          html += '</div></div>';
         }
 
         // Action buttons
