@@ -5854,8 +5854,8 @@ app.get('/inloggen', (c) => {
         
         if (res.ok) {
           // Store in sessionStorage
-          sessionStorage.setItem('portal_code', code.toUpperCase());
-          sessionStorage.setItem('portal_patient', JSON.stringify(data));
+          localStorage.setItem('portal_code', code.toUpperCase());
+          localStorage.setItem('portal_patient', JSON.stringify(data));
           window.location.href = '/menu';
         } else {
           errDiv.textContent = data.error || 'Ongeldige toegangscode. Controleer de code en probeer opnieuw.';
@@ -6097,8 +6097,8 @@ app.get('/betalen/analyse', (c) => {
   </main>
 
   <script>
-    const portalCode = sessionStorage.getItem('portal_code');
-    const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+    const portalCode = localStorage.getItem('portal_code');
+    const patientInfo = JSON.parse(localStorage.getItem('portal_patient') || '{}');
     if (!portalCode || !patientInfo.id) { window.location.href = '/inloggen'; }
 
     function toggleCoupon() {
@@ -6126,7 +6126,7 @@ app.get('/betalen/analyse', (c) => {
         // Update sessionStorage en redirect naar succes
         if (type === 'analysis') patientInfo.analysis_paid = true;
         if (type === 'protocol') patientInfo.protocol_paid = true;
-        sessionStorage.setItem('portal_patient', JSON.stringify(patientInfo));
+        localStorage.setItem('portal_patient', JSON.stringify(patientInfo));
         window.location.href = '/betaling-succes?coupon=1&type=' + type;
       } catch(err) {
         errEl.textContent = 'Verbindingsfout. Probeer opnieuw.';
@@ -6296,8 +6296,8 @@ app.get('/betalen/protocol', (c) => {
   </main>
 
   <script>
-    const portalCode = sessionStorage.getItem('portal_code');
-    const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+    const portalCode = localStorage.getItem('portal_code');
+    const patientInfo = JSON.parse(localStorage.getItem('portal_patient') || '{}');
     if (!portalCode || !patientInfo.id) { window.location.href = '/inloggen'; }
 
     function toggleCoupon() {
@@ -6324,7 +6324,7 @@ app.get('/betalen/protocol', (c) => {
         }
         if (type === 'analysis') patientInfo.analysis_paid = true;
         if (type === 'protocol') patientInfo.protocol_paid = true;
-        sessionStorage.setItem('portal_patient', JSON.stringify(patientInfo));
+        localStorage.setItem('portal_patient', JSON.stringify(patientInfo));
         window.location.href = '/betaling-succes?coupon=1&type=' + type;
       } catch(err) {
         errEl.textContent = 'Verbindingsfout. Probeer opnieuw.';
@@ -6505,10 +6505,10 @@ app.get('/betaling-succes', (c) => {
             document.getElementById('protocol-next').classList.remove('hidden');
           }
           // Update sessionStorage
-          const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+          const patientInfo = JSON.parse(localStorage.getItem('portal_patient') || '{}');
           if (type === 'analysis') patientInfo.analysis_paid = true;
           if (type === 'protocol') patientInfo.protocol_paid = true;
-          sessionStorage.setItem('portal_patient', JSON.stringify(patientInfo));
+          localStorage.setItem('portal_patient', JSON.stringify(patientInfo));
         } else {
           document.getElementById('failed').classList.remove('hidden');
         }
@@ -6624,8 +6624,8 @@ app.get('/menu', (c) => {
     </div>
   </main>
   <script>
-    const portalCode = sessionStorage.getItem('portal_code');
-    const patientInfo = sessionStorage.getItem('portal_patient');
+    const portalCode = localStorage.getItem('portal_code');
+    const patientInfo = localStorage.getItem('portal_patient');
     if (!portalCode || !patientInfo) {
       window.location.href = '/inloggen';
     }
@@ -6635,9 +6635,9 @@ app.get('/menu', (c) => {
     function goToAnalysis() { window.location.href = '/betalen/analyse'; }
     function goToProtocol() { window.location.href = '/betalen/protocol'; }
     function logout() {
-      sessionStorage.removeItem('portal_code');
-      sessionStorage.removeItem('portal_patient');
-      sessionStorage.removeItem('questionnaire_consent');
+      localStorage.removeItem('portal_code');
+      localStorage.removeItem('portal_patient');
+      localStorage.removeItem('questionnaire_consent');
       window.location.href = '/';
     }
 
@@ -6810,7 +6810,7 @@ app.get('/vragenlijst', (c) => {
       errDiv.classList.add('hidden');
       
       // Sla consent op in sessionStorage
-      sessionStorage.setItem('questionnaire_consent', JSON.stringify({
+      localStorage.setItem('questionnaire_consent', JSON.stringify({
         medical: true, data_processing: true, liability: true,
         timestamp: new Date().toISOString()
       }));
@@ -6821,15 +6821,15 @@ app.get('/vragenlijst', (c) => {
     }
 
     // Check of consent al gegeven is (bij terugkeer)
-    const existingConsent = sessionStorage.getItem('questionnaire_consent');
+    const existingConsent = localStorage.getItem('questionnaire_consent');
     if (existingConsent) {
       document.getElementById('consent-screen').classList.add('hidden');
       document.getElementById('questionnaire-container').classList.remove('hidden');
     }
 
     // Check login
-    const portalCode = sessionStorage.getItem('portal_code');
-    const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
+    const portalCode = localStorage.getItem('portal_code');
+    const patientInfo = JSON.parse(localStorage.getItem('portal_patient') || '{}');
     if (!portalCode) { window.location.href = '/inloggen'; }
     
     document.getElementById('patient-greeting').textContent = 'Hallo ' + (patientInfo.first_name || '') + ', vul onderstaande vragen eerlijk in.';
@@ -7108,7 +7108,7 @@ app.get('/lab-upload', (c) => {
   
   <script>
     // Check login
-    const portalCode = sessionStorage.getItem('portal_code');
+    const portalCode = localStorage.getItem('portal_code');
     if (!portalCode) { window.location.href = '/inloggen'; }
     
     let selectedFile = null;
@@ -7351,8 +7351,8 @@ app.get('/mijn-voortgang', (c) => {
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script>
-    const portalCode = sessionStorage.getItem('portal_code');
-    const patientInfo = sessionStorage.getItem('portal_patient');
+    const portalCode = localStorage.getItem('portal_code');
+    const patientInfo = localStorage.getItem('portal_patient');
     if (!portalCode || !patientInfo) { window.location.href = '/inloggen'; }
 
     const SYMPTOMS = [
