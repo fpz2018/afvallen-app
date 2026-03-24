@@ -151,24 +151,21 @@ function resetRateLimit(ip: string) {
   loginAttempts.delete(ip)
 }
 
-// --- Session management ---
-const activeSessions = new Map<string, { created: number, email: string }>()
-const SESSION_MAX_AGE = 24 * 60 * 60 * 1000 // 24 uur
+// --- Session management via Supabase JWT ---
+// Sessies worden niet meer in memory opgeslagen maar gevalideerd via Supabase auth.getUser()
+// zodat alle serverless instanties dezelfde sessievalidatie gebruiken.
 
-// --- 2FA state: opgeslagen in Supabase user metadata ---
 // Pending 2FA sessions (wachtend op TOTP code na correcte login)
 const pending2FA = new Map<string, { email: string, created: number, supabaseToken: string }>()
 const PENDING_2FA_EXPIRY = 5 * 60 * 1000 // 5 minuten
 
-function isValidSession(sessionToken: string | undefined): boolean {
-  if (!sessionToken) return false
-  const session = activeSessions.get(sessionToken)
-  if (!session) return false
-  if (Date.now() - session.created > SESSION_MAX_AGE) {
-    activeSessions.delete(sessionToken)
-    return false
-  }
-  return true
+async function getSessionUser(c: any): Promise<{ valid: boolean, email: string }> {
+  const token = getCookie(c, 'admin_session')
+  if (!token) return { valid: false, email: '' }
+  const db = getSupabase(getEnv(c))
+  const { data, error } = await db.auth.getUser(token)
+  if (error || !data.user) return { valid: false, email: '' }
+  return { valid: true, email: data.user.email || '' }
 }
 
 function getClientIP(c: any): string {
@@ -234,12 +231,9 @@ app.post('/api/admin/login', async (c) => {
     })
   }
 
-  // Geen 2FA — direct inloggen
+  // Geen 2FA — direct inloggen met Supabase access_token als sessie cookie
   resetRateLimit(ip)
-  const sessionToken = generateSessionToken()
-  activeSessions.set(sessionToken, { created: Date.now(), email: data.user?.email || email })
-
-  setCookie(c, 'admin_session', sessionToken, {
+  setCookie(c, 'admin_session', data.access_token, {
     httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
   })
 
@@ -363,13 +357,10 @@ app.post('/api/admin/verify-2fa', async (c) => {
     return c.json({ error: 'Ongeldige verificatiecode', remaining: rateCheck.remaining }, 401)
   }
 
-  // 2FA gelukt — sessie aanmaken
+  // 2FA gelukt — Supabase token als sessie cookie instellen
   pending2FA.delete(pending_token)
   resetRateLimit(ip)
-  const sessionToken = generateSessionToken()
-  activeSessions.set(sessionToken, { created: Date.now(), email: pending.email })
-
-  setCookie(c, 'admin_session', sessionToken, {
+  setCookie(c, 'admin_session', pending.supabaseToken, {
     httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
   })
 
@@ -378,21 +369,20 @@ app.post('/api/admin/verify-2fa', async (c) => {
 
 // 2FA Setup: genereer secret + QR URL
 app.post('/api/admin/2fa/setup', async (c) => {
-  const sessionToken = getCookie(c, 'admin_session')
-  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
-  
-  const session = activeSessions.get(sessionToken!)
+  const { valid, email } = await getSessionUser(c)
+  if (!valid) return c.json({ error: 'Niet ingelogd' }, 401)
+
   const secret = generateTOTPSecret()
-  const otpauthUrl = `otpauth://totp/GripOpGewicht:${encodeURIComponent(session!.email)}?secret=${secret}&issuer=GripOpGewicht&digits=6&period=30`
-  
-  return c.json({ secret, otpauth_url: otpauthUrl, email: session!.email })
+  const otpauthUrl = `otpauth://totp/GripOpGewicht:${encodeURIComponent(email)}?secret=${secret}&issuer=GripOpGewicht&digits=6&period=30`
+
+  return c.json({ secret, otpauth_url: otpauthUrl, email })
 })
 
 // 2FA Activeren: verificeer code en sla secret op
 app.post('/api/admin/2fa/enable', async (c) => {
-  const sessionToken = getCookie(c, 'admin_session')
-  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
-  
+  const { valid: sessionValid, email } = await getSessionUser(c)
+  if (!sessionValid) return c.json({ error: 'Niet ingelogd' }, 401)
+
   const { secret, totp_code } = await c.req.json()
   if (!secret || !totp_code) return c.json({ error: 'Secret en code zijn verplicht' }, 400)
 
@@ -400,10 +390,9 @@ app.post('/api/admin/2fa/enable', async (c) => {
   if (!valid) return c.json({ error: 'Ongeldige code. Probeer opnieuw.' }, 400)
 
   // Sla secret op in admin_2fa tabel
-  const session = activeSessions.get(sessionToken!)
   const db = getSupabase(getEnv(c))
-  const { error } = await db.from('admin_2fa').upsert({ 
-    email: session!.email, 
+  const { error } = await db.from('admin_2fa').upsert({
+    email,
     totp_secret: secret, 
     enabled: true,
     created_at: new Date().toISOString(),
@@ -420,33 +409,31 @@ app.post('/api/admin/2fa/enable', async (c) => {
 
 // 2FA Uitschakelen
 app.post('/api/admin/2fa/disable', async (c) => {
-  const sessionToken = getCookie(c, 'admin_session')
-  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
-  
+  const { valid, email } = await getSessionUser(c)
+  if (!valid) return c.json({ error: 'Niet ingelogd' }, 401)
+
   const { totp_code } = await c.req.json()
-  const session = activeSessions.get(sessionToken!)
-  
+
   // Verifieer huidige 2FA code voordat we uitschakelen
   const db = getSupabase(getEnv(c))
-  const { data: fa } = await db.from('admin_2fa').select('totp_secret').eq('email', session!.email).single()
-  
+  const { data: fa } = await db.from('admin_2fa').select('totp_secret').eq('email', email).single()
+
   if (fa?.totp_secret) {
-    const valid = await verifyTOTP(fa.totp_secret, totp_code)
-    if (!valid) return c.json({ error: 'Ongeldige verificatiecode' }, 401)
+    const validTotp = await verifyTOTP(fa.totp_secret, totp_code)
+    if (!validTotp) return c.json({ error: 'Ongeldige verificatiecode' }, 401)
   }
 
-  await db.from('admin_2fa').delete().eq('email', session!.email)
+  await db.from('admin_2fa').delete().eq('email', email)
   return c.json({ success: true, message: '2FA is uitgeschakeld' })
 })
 
 // 2FA Status check
 app.get('/api/admin/2fa/status', async (c) => {
-  const sessionToken = getCookie(c, 'admin_session')
-  if (!isValidSession(sessionToken)) return c.json({ error: 'Niet ingelogd' }, 401)
-  
-  const session = activeSessions.get(sessionToken!)
+  const { valid, email } = await getSessionUser(c)
+  if (!valid) return c.json({ error: 'Niet ingelogd' }, 401)
+
   const db = getSupabase(getEnv(c))
-  const { data, error } = await db.from('admin_2fa').select('enabled').eq('email', session!.email).single()
+  const { data, error } = await db.from('admin_2fa').select('enabled').eq('email', email).single()
   
   // Als de tabel niet bestaat, geef dat aan
   if (error && (error.code === 'PGRST204' || error.message?.includes('admin_2fa') || error.code === '42P01')) {
@@ -458,38 +445,30 @@ app.get('/api/admin/2fa/status', async (c) => {
 
 // Logout
 app.post('/api/admin/logout', (c) => {
-  const sessionToken = getCookie(c, 'admin_session')
-  if (sessionToken) activeSessions.delete(sessionToken)
   deleteCookie(c, 'admin_session', { path: '/' })
   return c.json({ success: true })
 })
 
 // Sessie check
-app.get('/api/admin/session', (c) => {
-  const sessionToken = getCookie(c, 'admin_session')
-  if (!isValidSession(sessionToken)) {
+app.get('/api/admin/session', async (c) => {
+  const { valid, email } = await getSessionUser(c)
+  if (!valid) {
     deleteCookie(c, 'admin_session', { path: '/' })
     return c.json({ authenticated: false }, 401)
   }
-  const session = activeSessions.get(sessionToken!)
-  return c.json({ authenticated: true, email: session!.email })
+  return c.json({ authenticated: true, email })
 })
 
 // =====================================================
 // AUTH MIDDLEWARE — beschermt /admin/* pagina's EN /api/* data routes
 // =====================================================
 
-// Helper: check of request een geldige admin sessie heeft
-function requireAdminSession(c: any): boolean {
-  const sessionToken = getCookie(c, 'admin_session')
-  return isValidSession(sessionToken)
-}
-
 // Bescherm admin pagina's (redirect naar login)
 app.use('/admin/*', async (c, next) => {
   if (c.req.path === '/admin/login' || c.req.path === '/admin/reset-wachtwoord') return next()
-  
-  if (!requireAdminSession(c)) {
+
+  const { valid } = await getSessionUser(c)
+  if (!valid) {
     deleteCookie(c, 'admin_session', { path: '/' })
     return c.redirect('/admin/login')
   }
@@ -497,7 +476,8 @@ app.use('/admin/*', async (c, next) => {
 })
 
 app.use('/admin', async (c, next) => {
-  if (!requireAdminSession(c)) {
+  const { valid } = await getSessionUser(c)
+  if (!valid) {
     deleteCookie(c, 'admin_session', { path: '/' })
     return c.redirect('/admin/login')
   }
@@ -521,7 +501,8 @@ app.use('/api/*', async (c, next) => {
   }
 
   // Alle andere API routes vereisen admin sessie
-  if (!requireAdminSession(c)) {
+  const { valid } = await getSessionUser(c)
+  if (!valid) {
     return c.json({ error: 'Niet geautoriseerd. Log in via /admin/login' }, 401)
   }
   
