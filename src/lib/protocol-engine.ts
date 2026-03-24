@@ -41,6 +41,7 @@ export interface Protocol {
   lifestyle: LifestylePlan
   medicationAdvice: MedicationAdvice[]
   followUp: { period: string; action: string; goal: string }[]
+  warnings: string[]
 }
 
 const SUPPLEMENT_DB: Record<string, Supplement[]> = {
@@ -138,13 +139,20 @@ const NUTRITION_DB: Record<string, Partial<NutritionPlan>> = {
   },
 }
 
+// Hulpfunctie: parseer de hoogste doseerwaarde uit een string (bijv. "400-600 mg" → 600)
+function parseDosageMax(dosage: string): number {
+  const numbers = dosage.match(/\d+/g)?.map(Number) || [0]
+  return Math.max(...numbers)
+}
+
 export function generateProtocol(categoryIds: string[]): Protocol {
-  // Collect supplements (deduplicate by name)
+  // Collect supplements — bij duplicaten de hoogste dosering bewaren
   const supplementMap = new Map<string, Supplement>()
   for (const catId of categoryIds) {
     const supplements = SUPPLEMENT_DB[catId] || []
     for (const supp of supplements) {
-      if (!supplementMap.has(supp.name)) {
+      const existing = supplementMap.get(supp.name)
+      if (!existing || parseDosageMax(supp.dosage) > parseDosageMax(existing.dosage)) {
         supplementMap.set(supp.name, supp)
       }
     }
@@ -193,6 +201,17 @@ export function generateProtocol(categoryIds: string[]): Protocol {
     })
   }
 
+  // Conflicterende adviezen signaleren aan de therapeut
+  const warnings: string[] = []
+  if (categoryIds.includes('insulin') && categoryIds.includes('cortisol')) {
+    warnings.push(
+      'Conflicterende koolhydraatadviezen: Insuline-protocol adviseert 50-80 g/dag (strikt laag-glycemisch), ' +
+      'maar Cortisol-protocol adviseert 100-150 g/dag (niet te streng!). ' +
+      'Aanbeveling: begin met het cortisol-protocol (minder streng) en reduceer koolhydraten geleidelijk. ' +
+      'Bespreek prioritering met de patiënt.'
+    )
+  }
+
   // Follow-up
   const followUp = [
     { period: '2 weken', action: 'Check-in gesprek', goal: 'Adherence, bijwerkingen, vragen' },
@@ -208,5 +227,6 @@ export function generateProtocol(categoryIds: string[]): Protocol {
     lifestyle,
     medicationAdvice,
     followUp,
+    warnings,
   }
 }

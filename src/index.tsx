@@ -775,6 +775,7 @@ app.post('/api/protocols', async (c) => {
     nutrition: protocol.nutrition,
     lifestyle: protocol.lifestyle,
     medication_advice: protocol.medicationAdvice,
+    warnings: protocol.warnings,
     start_date: new Date().toISOString().split('T')[0],
     duration_weeks: 12,
     status: 'active',
@@ -3329,8 +3330,18 @@ app.get('/admin/protocol/:patientId/:protocolId', (c) => {
         const nutr = proto.nutrition||{};
         const life = proto.lifestyle||{};
         const medAdv = proto.medication_advice||[];
+        const warnings = Array.isArray(proto.warnings) ? proto.warnings : [];
 
         let html = '<div class="bg-white rounded-xl shadow"><div class="bg-gradient-to-r from-purple-600 to-pink-600 text-white p-6 rounded-t-xl"><h2 class="text-2xl font-bold"><i class="fas fa-file-medical mr-2"></i>Protocol: '+patient.first_name+' '+patient.last_name+'</h2><p class="opacity-90 mt-1">Type: '+proto.protocol_type+' | Aangemaakt: '+new Date(proto.created_at).toLocaleDateString('nl-NL')+'</p></div><div class="p-6">';
+
+        // Waarschuwingen voor conflicterende adviezen
+        if(warnings.length) {
+          html += '<div class="mb-6 space-y-3">';
+          warnings.forEach(w => {
+            html += '<div class="bg-orange-50 border-l-4 border-orange-500 p-4 rounded"><p class="font-bold text-orange-800 mb-1"><i class="fas fa-exclamation-triangle mr-2"></i>Let op: conflicterend advies</p><p class="text-sm text-orange-700">'+w+'</p></div>';
+          });
+          html += '</div>';
+        }
 
         // Supplements
         html += '<h3 class="font-bold text-lg mb-4"><i class="fas fa-pills mr-2 text-purple-600"></i>1. Supplementen Protocol</h3><div class="overflow-x-auto mb-6"><table class="w-full text-sm"><thead><tr class="bg-gray-50"><th class="p-3 text-left">Supplement</th><th class="p-3 text-left">Dosering</th><th class="p-3 text-left">Timing</th><th class="p-3 text-left">Reden</th><th class="p-3 text-left">Duur</th></tr></thead><tbody>';

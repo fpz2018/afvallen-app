@@ -108,7 +108,8 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
       risk: hormonalScore >= 5 ? 'high' : 'medium',
       color: 'pink',
       triggers: [
-        responses.menstrual_regularity === 'irregular' ? 'Onregelmatige menstruatiecyclus' : '',
+        responses.menstrual_regularity === 'irregular' ? 'Onregelmatige menstruatiecyclus' :
+          responses.menstrual_regularity === 'no' ? 'Geen menstruatie' : '',
         responses.diagnosed_conditions.includes('pcos') ? 'PCOS diagnose' : '',
         responses.fat_distribution === 'belly' ? 'Buikvet predominant' : '',
         responses.menopause_status === 'yes' ? 'Postmenopauzaal' : '',
@@ -208,13 +209,14 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
     riskScores['standard'] = 1
   }
 
-  // Determine primary type
+  // Determine primary type — alleen uit actieve categorieën, niet uit alle riskScores
   let primaryType = categories[0]?.id || 'standard'
   let maxScore = 0
-  for (const [key, score] of Object.entries(riskScores)) {
+  for (const cat of categories) {
+    const score = riskScores[cat.id] ?? 0
     if (score > maxScore) {
       maxScore = score
-      primaryType = key
+      primaryType = cat.id
     }
   }
 
