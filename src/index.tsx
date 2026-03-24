@@ -111,53 +111,55 @@ async function verifyTOTP(secret: string, token: string): Promise<boolean> {
   return false
 }
 
-// --- Rate limiting ---
-const loginAttempts = new Map<string, { count: number, firstAttempt: number, blocked: boolean, blockedUntil: number }>()
+// --- Rate limiting via Supabase (vervangt in-memory Map) ---
 const MAX_ATTEMPTS = 5
 const WINDOW_MS = 15 * 60 * 1000   // 15 minuten window
 const BLOCK_MS = 30 * 60 * 1000    // 30 minuten blokkade
 
-function checkRateLimit(ip: string): { allowed: boolean, remaining: number, retryAfter?: number } {
-  const now = Date.now()
-  const entry = loginAttempts.get(ip)
-  
+async function checkRateLimit(ip: string, c: any): Promise<{ allowed: boolean, remaining: number, retryAfter?: number }> {
+  const db = getSupabase(getEnv(c))
+  const now = new Date()
+
+  const { data: entry } = await db.from('login_attempts').select('*').eq('ip', ip).single()
+
   if (!entry) {
-    loginAttempts.set(ip, { count: 1, firstAttempt: now, blocked: false, blockedUntil: 0 })
+    await db.from('login_attempts').insert({ ip, count: 1, first_attempt: now.toISOString() })
     return { allowed: true, remaining: MAX_ATTEMPTS - 1 }
   }
 
   // Geblokkeerd?
-  if (entry.blocked && now < entry.blockedUntil) {
-    return { allowed: false, remaining: 0, retryAfter: Math.ceil((entry.blockedUntil - now) / 1000) }
+  if (entry.blocked_until && new Date(entry.blocked_until) > now) {
+    const retryAfter = Math.ceil((new Date(entry.blocked_until).getTime() - now.getTime()) / 1000)
+    return { allowed: false, remaining: 0, retryAfter }
   }
 
   // Window verlopen? Reset
-  if (now - entry.firstAttempt > WINDOW_MS) {
-    loginAttempts.set(ip, { count: 1, firstAttempt: now, blocked: false, blockedUntil: 0 })
+  if (new Date(entry.first_attempt).getTime() < now.getTime() - WINDOW_MS) {
+    await db.from('login_attempts').update({ count: 1, first_attempt: now.toISOString(), blocked_until: null }).eq('ip', ip)
     return { allowed: true, remaining: MAX_ATTEMPTS - 1 }
   }
 
-  entry.count++
-  if (entry.count > MAX_ATTEMPTS) {
-    entry.blocked = true
-    entry.blockedUntil = now + BLOCK_MS
+  const newCount = entry.count + 1
+  if (newCount > MAX_ATTEMPTS) {
+    const blockedUntil = new Date(now.getTime() + BLOCK_MS).toISOString()
+    await db.from('login_attempts').update({ count: newCount, blocked_until: blockedUntil }).eq('ip', ip)
     return { allowed: false, remaining: 0, retryAfter: Math.ceil(BLOCK_MS / 1000) }
   }
 
-  return { allowed: true, remaining: MAX_ATTEMPTS - entry.count }
+  await db.from('login_attempts').update({ count: newCount }).eq('ip', ip)
+  return { allowed: true, remaining: MAX_ATTEMPTS - newCount }
 }
 
-function resetRateLimit(ip: string) {
-  loginAttempts.delete(ip)
+async function resetRateLimit(ip: string, c: any): Promise<void> {
+  const db = getSupabase(getEnv(c))
+  await db.from('login_attempts').delete().eq('ip', ip)
 }
 
 // --- Session management via Supabase JWT ---
 // Sessies worden niet meer in memory opgeslagen maar gevalideerd via Supabase auth.getUser()
 // zodat alle serverless instanties dezelfde sessievalidatie gebruiken.
 
-// Pending 2FA sessions (wachtend op TOTP code na correcte login)
-const pending2FA = new Map<string, { email: string, created: number, supabaseToken: string }>()
-const PENDING_2FA_EXPIRY = 5 * 60 * 1000 // 5 minuten
+// Pending 2FA state wordt opgeslagen in Supabase (tabel: pending_2fa)
 
 async function getSessionUser(c: any): Promise<{ valid: boolean, email: string }> {
   const token = getCookie(c, 'admin_session')
@@ -181,10 +183,10 @@ function getClientIP(c: any): string {
 // Login stap 1: email + wachtwoord
 app.post('/api/admin/login', async (c) => {
   const ip = getClientIP(c)
-  const rateCheck = checkRateLimit(ip)
-  
+  const rateCheck = await checkRateLimit(ip, c)
+
   if (!rateCheck.allowed) {
-    return c.json({ 
+    return c.json({
       error: `Te veel inlogpogingen. Probeer opnieuw over ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`,
       blocked: true,
       retryAfter: rateCheck.retryAfter
@@ -197,7 +199,7 @@ app.post('/api/admin/login', async (c) => {
   }
 
   const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
-  
+
   // Supabase Auth login
   const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
     method: 'POST',
@@ -214,25 +216,27 @@ app.post('/api/admin/login', async (c) => {
   // Check of 2FA is ingeschakeld via admin_2fa tabel
   const db = getSupabase(getEnv(c))
   const { data: faData } = await db.from('admin_2fa').select('totp_secret, enabled').eq('email', data.user?.email || email).single()
-  
+
   if (faData?.enabled && faData?.totp_secret) {
-    // 2FA is ingeschakeld — maak pending sessie
+    // 2FA is ingeschakeld — sla pending state op in Supabase
     const pendingToken = generateSessionToken()
-    pending2FA.set(pendingToken, { 
-      email: data.user.email, 
-      created: Date.now(),
-      supabaseToken: data.access_token 
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+    await db.from('pending_2fa').insert({
+      token: pendingToken,
+      email: data.user.email,
+      supabase_token: data.access_token,
+      expires_at: expiresAt
     })
-    
-    return c.json({ 
-      requires_2fa: true, 
+
+    return c.json({
+      requires_2fa: true,
       pending_token: pendingToken,
       email: data.user.email
     })
   }
 
   // Geen 2FA — direct inloggen met Supabase access_token als sessie cookie
-  resetRateLimit(ip)
+  await resetRateLimit(ip, c)
   setCookie(c, 'admin_session', data.access_token, {
     httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
   })
@@ -243,7 +247,7 @@ app.post('/api/admin/login', async (c) => {
 // Wachtwoord vergeten — stuur reset-email via Supabase Auth
 app.post('/api/admin/reset-password', async (c) => {
   const ip = getClientIP(c)
-  const rateCheck = checkRateLimit(ip)
+  const rateCheck = await checkRateLimit(ip, c)
   if (!rateCheck.allowed) {
     return c.json({ error: `Te veel pogingen. Wacht ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`, blocked: true }, 429)
   }
@@ -325,7 +329,7 @@ app.post('/api/admin/update-password', async (c) => {
 // Login stap 2: 2FA verificatie
 app.post('/api/admin/verify-2fa', async (c) => {
   const ip = getClientIP(c)
-  const rateCheck = checkRateLimit(ip)
+  const rateCheck = await checkRateLimit(ip, c)
   if (!rateCheck.allowed) {
     return c.json({ error: `Te veel pogingen. Wacht ${Math.ceil((rateCheck.retryAfter || 1800) / 60)} minuten.`, blocked: true }, 429)
   }
@@ -335,20 +339,27 @@ app.post('/api/admin/verify-2fa', async (c) => {
     return c.json({ error: 'Token en verificatiecode zijn verplicht' }, 400)
   }
 
-  const pending = pending2FA.get(pending_token)
-  if (!pending || Date.now() - pending.created > PENDING_2FA_EXPIRY) {
-    if (pending) pending2FA.delete(pending_token)
+  const db = getSupabase(getEnv(c))
+
+  // Haal pending state op uit Supabase (inclusief expiry check)
+  const { data: pending } = await db
+    .from('pending_2fa')
+    .select('*')
+    .eq('token', pending_token)
+    .gt('expires_at', new Date().toISOString())
+    .single()
+
+  if (!pending) {
+    await db.from('pending_2fa').delete().eq('token', pending_token)
     return c.json({ error: 'Sessie verlopen. Log opnieuw in.' }, 401)
   }
 
   // Haal TOTP secret op via admin_2fa tabel
-  const { SUPABASE_URL, SUPABASE_ANON_KEY } = getEnv(c)
-  const db = getSupabase(getEnv(c))
   const { data: faData } = await db.from('admin_2fa').select('totp_secret').eq('email', pending.email).single()
   const secret = faData?.totp_secret
 
   if (!secret) {
-    pending2FA.delete(pending_token)
+    await db.from('pending_2fa').delete().eq('token', pending_token)
     return c.json({ error: '2FA configuratie niet gevonden' }, 500)
   }
 
@@ -358,9 +369,9 @@ app.post('/api/admin/verify-2fa', async (c) => {
   }
 
   // 2FA gelukt — Supabase token als sessie cookie instellen
-  pending2FA.delete(pending_token)
-  resetRateLimit(ip)
-  setCookie(c, 'admin_session', pending.supabaseToken, {
+  await db.from('pending_2fa').delete().eq('token', pending_token)
+  await resetRateLimit(ip, c)
+  setCookie(c, 'admin_session', pending.supabase_token, {
     httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 86400
   })
 
