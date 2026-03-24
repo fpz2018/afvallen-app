@@ -3,6 +3,7 @@
 // Genereert lab-test pakketten op basis van categorieën
 // Inclusief BLOED + ONTLASTING onderzoek
 // =====================================================
+import { TriageResponses } from './classification'
 
 export interface LabTest {
   name: string
@@ -192,7 +193,7 @@ export interface RiskProfile {
   hormonalComplexity: 'high' | 'medium' | 'low'
 }
 
-export function generateRiskProfile(categories: Array<{id: string, risk: string, name: string, triggers: string[]}>, riskScores: Record<string, number>, responses: Record<string, any>): RiskProfile {
+export function generateRiskProfile(categories: Array<{id: string, risk: string, name: string, triggers: string[]}>, riskScores: Record<string, number>, responses: TriageResponses): RiskProfile {
   const highRiskCount = categories.filter(c => c.risk === 'high').length
   const mediumRiskCount = categories.filter(c => c.risk === 'medium').length
   const totalCategories = categories.length
@@ -322,7 +323,7 @@ export function generateRiskProfile(categories: Array<{id: string, risk: string,
 // =====================================================
 // MAIN FUNCTION: Lab Recommendations
 // =====================================================
-export function getLabRecommendations(categoryIds: string[], responses?: Record<string, any>): LabPackage {
+export function getLabRecommendations(categoryIds: string[], responses?: Partial<TriageResponses>): LabPackage {
   const bloodMap = new Map<string, LabTest>()
   const stoolMap = new Map<string, LabTest>()
   const otherMap = new Map<string, LabTest>()
@@ -571,6 +572,9 @@ export const LAB_REFERENCES: LabReference[] = [
   },
 ]
 
+// Map voor O(1) lookups i.p.v. O(n) Array.find() per labresultaat
+const LAB_REFERENCES_MAP: Map<string, LabReference> = new Map(LAB_REFERENCES.map(r => [r.code, r]))
+
 export interface LabInterpretation {
   code: string
   name: string
@@ -586,7 +590,7 @@ export function interpretLabResults(results: Record<string, number>): LabInterpr
   const interpretations: LabInterpretation[] = []
 
   for (const [code, value] of Object.entries(results)) {
-    const ref = LAB_REFERENCES.find(r => r.code === code)
+    const ref = LAB_REFERENCES_MAP.get(code)
     if (!ref) continue
 
     let status: 'optimal' | 'low' | 'high' = 'optimal'

@@ -36,6 +36,16 @@ export interface ClassificationResult {
   riskScores: Record<string, number>
 }
 
+// Drempelwaarden per categorie — één plek om aan te passen
+const THRESHOLDS = {
+  metabolic_resistance: { medium: 4, high: 6 },
+  thyroid:              { medium: 3, high: 5 },
+  hormonal:             { medium: 3, high: 5 },
+  cortisol:             { medium: 4, high: 6 },
+  insulin:              { medium: 4, high: 6 },
+  medication:           { medium: 3, high: 5 },
+}
+
 export function classifyPatient(responses: TriageResponses): ClassificationResult {
   const categories: Category[] = []
   const riskScores: Record<string, number> = {}
@@ -50,12 +60,12 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
   if (responses.hunger_after_meal === 'often') metabolicScore += 1
   riskScores['metabolic_resistance'] = metabolicScore
 
-  if (metabolicScore >= 4) {
+  if (metabolicScore >= THRESHOLDS.metabolic_resistance.medium) {
     categories.push({
       id: 'metabolic_resistance',
       name: 'Metabole Weerstand',
       icon: 'fa-fire',
-      risk: metabolicScore >= 6 ? 'high' : 'medium',
+      risk: metabolicScore >= THRESHOLDS.metabolic_resistance.high ? 'high' : 'medium',
       color: 'red',
       triggers: [
         responses.weight_loss_success === 'none' ? 'Geen resultaat ondanks inspanningen' : '',
@@ -74,12 +84,12 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
   if (responses.weight_loss_success === 'barely' || responses.weight_loss_success === 'none') thyroidScore += 1
   riskScores['thyroid'] = thyroidScore
 
-  if (thyroidScore >= 3) {
+  if (thyroidScore >= THRESHOLDS.thyroid.medium) {
     categories.push({
       id: 'thyroid',
       name: 'Schildklier-gedreven',
       icon: 'fa-moon',
-      risk: thyroidScore >= 5 ? 'high' : 'medium',
+      risk: thyroidScore >= THRESHOLDS.thyroid.high ? 'high' : 'medium',
       color: 'indigo',
       triggers: [
         responses.fatigue_cold_dry === 'yes' ? 'Moe, koud, droge huid' : '',
@@ -100,12 +110,12 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
   }
   riskScores['hormonal'] = hormonalScore
 
-  if (hormonalScore >= 3) {
+  if (hormonalScore >= THRESHOLDS.hormonal.medium) {
     categories.push({
       id: 'hormonal',
       name: 'PCOS / Hormonen',
       icon: 'fa-venus',
-      risk: hormonalScore >= 5 ? 'high' : 'medium',
+      risk: hormonalScore >= THRESHOLDS.hormonal.high ? 'high' : 'medium',
       color: 'pink',
       triggers: [
         responses.menstrual_regularity === 'irregular' ? 'Onregelmatige menstruatiecyclus' :
@@ -126,12 +136,12 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
   if (responses.fat_distribution === 'belly') cortisolScore += 1
   riskScores['cortisol'] = cortisolScore
 
-  if (cortisolScore >= 4) {
+  if (cortisolScore >= THRESHOLDS.cortisol.medium) {
     categories.push({
       id: 'cortisol',
       name: 'Cortisol-gedreven',
       icon: 'fa-brain',
-      risk: cortisolScore >= 6 ? 'high' : 'medium',
+      risk: cortisolScore >= THRESHOLDS.cortisol.high ? 'high' : 'medium',
       color: 'orange',
       triggers: [
         responses.stress_frequency === 'daily' ? 'Dagelijkse stress/angst' : '',
@@ -151,12 +161,12 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
   if (responses.fat_distribution === 'belly') insulinScore += 1
   riskScores['insulin'] = insulinScore
 
-  if (insulinScore >= 4) {
+  if (insulinScore >= THRESHOLDS.insulin.medium) {
     categories.push({
       id: 'insulin',
       name: 'Insuline-gedreven',
       icon: 'fa-candy-cane',
-      risk: insulinScore >= 6 ? 'high' : 'medium',
+      risk: insulinScore >= THRESHOLDS.insulin.high ? 'high' : 'medium',
       color: 'red',
       triggers: [
         responses.hunger_after_meal === 'always' ? 'Altijd honger na maaltijd' : '',
@@ -177,12 +187,12 @@ export function classifyPatient(responses: TriageResponses): ClassificationResul
   if (responses.medication_use.includes('diabetes_med')) medicationScore += 1
   riskScores['medication'] = medicationScore
 
-  if (medicationScore >= 3) {
+  if (medicationScore >= THRESHOLDS.medication.medium) {
     categories.push({
       id: 'medication',
       name: 'Medicatie-gerelateerd',
       icon: 'fa-pills',
-      risk: medicationScore >= 5 ? 'high' : 'medium',
+      risk: medicationScore >= THRESHOLDS.medication.high ? 'high' : 'medium',
       color: 'blue',
       triggers: [
         responses.medication_use.includes('statins') ? 'Statinegebruik' : '',
