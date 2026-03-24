@@ -4978,6 +4978,63 @@ app.post('/api/portal/lab-upload', async (c) => {
 })
 
 // =====================================================
+// PORTAL API: PROGRESS
+// =====================================================
+
+// Helper: haal patient_id op uit portal_code
+async function resolvePatientByCode(db: any, code: string): Promise<string | null> {
+  const upper = code.toUpperCase().trim()
+  const { data } = await db
+    .from('patients')
+    .select('id')
+    .eq('portal_code', upper)
+    .eq('status', 'active')
+    .single()
+  if (data) return data.id
+  // Fallback: notes-veld
+  const { data: all } = await db.from('patients').select('id, notes').eq('status', 'active')
+  const found = all?.find((p: any) => p.notes?.includes('PORTAL_CODE:' + upper))
+  return found?.id || null
+}
+
+app.post('/api/portal/progress', async (c) => {
+  const db = getSupabase(getEnv(c))
+  const body = await c.req.json()
+  const patientId = await resolvePatientByCode(db, body.portal_code || '')
+  if (!patientId) return c.json({ error: 'Ongeldige toegangscode' }, 401)
+
+  const row: any = {
+    patient_id: patientId,
+    measurement_date: body.measurement_date || new Date().toISOString().split('T')[0],
+  }
+  if (body.weight_kg != null) row.weight_kg = body.weight_kg
+  if (body.waist_cm != null) row.waist_cm = body.waist_cm
+  if (body.energy_level != null) row.energy_level = body.energy_level
+  if (body.symptoms) row.symptoms = body.symptoms
+  if (body.notes) row.notes = body.notes
+
+  const { data, error } = await db.from('progress_tracking').insert([row]).select().single()
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data, 201)
+})
+
+app.get('/api/portal/progress', async (c) => {
+  const db = getSupabase(getEnv(c))
+  const code = c.req.query('code') || ''
+  const patientId = await resolvePatientByCode(db, code)
+  if (!patientId) return c.json({ error: 'Ongeldige toegangscode' }, 401)
+
+  const { data, error } = await db
+    .from('progress_tracking')
+    .select('*')
+    .eq('patient_id', patientId)
+    .not('notes', 'like', '%Lab-document geüpload%')
+    .order('measurement_date', { ascending: true })
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json(data)
+})
+
+// =====================================================
 // PORTAL FRONTEND PAGES
 // =====================================================
 
@@ -6375,6 +6432,18 @@ app.get('/menu', (c) => {
           <span class="text-emerald-600 font-semibold text-sm"><i class="fas fa-heart mr-1"></i> Kies je bijdrage</span>
         </div>
         
+        <!-- Stap 5: Mijn Voortgang (na protocol) -->
+        <a href="/mijn-voortgang" id="card-progress" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block hidden">
+          <div class="flex items-center justify-between mb-4">
+            <div class="w-16 h-16 bg-teal-100 group-hover:bg-teal-200 rounded-2xl flex items-center justify-center transition">
+              <i class="fas fa-chart-line text-teal-600 text-2xl"></i>
+            </div>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">Mijn Voortgang</h3>
+          <p class="text-gray-500 text-sm mb-4">Houd zelf je gewicht, energie en klachten bij. Zie je verbetering over tijd.</p>
+          <span class="text-teal-600 font-semibold text-sm"><i class="fas fa-arrow-right mr-1"></i> Meting invoeren</span>
+        </a>
+
         <!-- Disclaimer -->
         <a href="/#disclaimer" class="bg-white rounded-2xl shadow-sm border p-8 card-hover group block">
           <div class="w-16 h-16 bg-yellow-100 group-hover:bg-yellow-200 rounded-2xl flex items-center justify-center mb-4 transition">
@@ -6466,6 +6535,8 @@ app.get('/menu', (c) => {
         if (protocolPaid) {
           document.getElementById('card-protocol').classList.remove('hidden');
           document.getElementById('card-protocol').innerHTML = '<div class="flex items-center justify-between mb-4"><div class="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center"><i class="fas fa-clipboard-list text-emerald-600 text-2xl"></i></div><span class="text-xs font-bold px-3 py-1 rounded-full bg-green-100 text-green-700">✓ Betaald</span></div><h3 class="text-xl font-bold text-gray-800 mb-2">Persoonlijk Protocol</h3><p class="text-gray-500 text-sm mb-4">Je protocol is beschikbaar.</p><span class="text-emerald-600 font-semibold text-sm"><i class="fas fa-eye mr-1"></i> Bekijk protocol</span>';
+          // Voortgang-kaart tonen zodra protocol betaald is
+          document.getElementById('card-progress').classList.remove('hidden');
         }
 
         // Status banner
@@ -7012,6 +7083,325 @@ app.get('/api/patients/:id/portal-code', async (c) => {
   }
   
   return c.json({ portal_code: portalCode, portal_code_created_at: data.portal_code_created_at })
+})
+
+// =====================================================
+// PORTAL: MIJN VOORTGANG
+// =====================================================
+app.get('/mijn-voortgang', (c) => {
+  return c.html(`${portalHead}
+<body class="bg-gray-50 min-h-screen">
+  ${portalNav}
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <div class="mb-6"><a href="/menu" class="text-portal-600 hover:text-portal-800 text-sm"><i class="fas fa-arrow-left mr-1"></i> Terug naar menu</a></div>
+
+    <div class="bg-white rounded-2xl shadow-lg overflow-hidden fade-in mb-6">
+      <div class="bg-gradient-to-r from-portal-600 to-teal-600 text-white p-6">
+        <h2 class="text-2xl font-bold"><i class="fas fa-chart-line mr-2"></i>Mijn Voortgang</h2>
+        <p class="opacity-90 mt-1">Houd zelf je gewicht, energie en klachten bij</p>
+      </div>
+
+      <!-- Nieuw meting formulier -->
+      <div class="p-6">
+        <button onclick="toggleForm()" id="toggle-btn" class="w-full bg-portal-600 hover:bg-portal-700 text-white font-bold py-3 px-6 rounded-xl transition flex items-center justify-center gap-2">
+          <i class="fas fa-plus"></i> Nieuwe meting invoeren
+        </button>
+
+        <div id="form-container" class="hidden mt-6 border rounded-xl p-5 bg-portal-50/30">
+          <h3 class="font-bold text-lg mb-4 text-gray-800"><i class="fas fa-pencil-alt mr-2 text-portal-600"></i>Meting invoeren</h3>
+          <form id="progress-form" onsubmit="submitMeting(event)" class="space-y-5">
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-1"><i class="far fa-calendar mr-1"></i>Datum</label>
+                <input type="date" name="measurement_date" id="meting-datum" required class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-1"><i class="fas fa-weight mr-1"></i>Gewicht (kg)</label>
+                <input type="number" name="weight_kg" step="0.1" min="30" max="400" placeholder="bijv. 82.5" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-1"><i class="fas fa-ruler-horizontal mr-1"></i>Tailleomtrek (cm)</label>
+                <input type="number" name="waist_cm" step="0.5" min="40" max="250" placeholder="bijv. 95" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-1"><i class="fas fa-bolt mr-1 text-yellow-500"></i>Energieniveau <span class="text-gray-400 font-normal">(1–10)</span></label>
+                <input type="number" name="energy_level" min="1" max="10" placeholder="1=uitgeput, 10=top" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+
+            <div>
+              <p class="text-sm font-semibold text-gray-700 mb-3"><i class="fas fa-heartbeat mr-1 text-red-400"></i>Klachten / symptomen <span class="text-gray-400 font-normal">(1=ernstig, 10=geen klacht)</span></p>
+              <div class="grid grid-cols-2 gap-3" id="symptom-sliders"></div>
+            </div>
+
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1"><i class="fas fa-comment mr-1"></i>Notitie <span class="text-gray-400 font-normal">(optioneel)</span></label>
+              <textarea name="notes" rows="2" maxlength="500" placeholder="Hoe voelt u zich? Bijzonderheden deze week?" class="w-full border rounded-lg px-3 py-2 text-sm resize-none"></textarea>
+            </div>
+
+            <div class="flex gap-3">
+              <button type="submit" id="submit-btn" class="bg-portal-600 hover:bg-portal-700 text-white font-bold py-2.5 px-6 rounded-xl transition flex items-center gap-2">
+                <i class="fas fa-save"></i> Opslaan
+              </button>
+              <button type="button" onclick="toggleForm()" class="border text-gray-600 hover:bg-gray-50 font-semibold py-2.5 px-5 rounded-xl transition">
+                Annuleren
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Grafieken -->
+    <div id="charts-container" class="space-y-6 hidden">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-white rounded-2xl shadow p-5 fade-in">
+          <h3 class="font-bold text-sm text-gray-700 mb-3"><i class="fas fa-weight mr-1 text-blue-500"></i>Gewichtverloop</h3>
+          <canvas id="chart-weight" height="200"></canvas>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-5 fade-in">
+          <h3 class="font-bold text-sm text-gray-700 mb-3"><i class="fas fa-bolt mr-1 text-yellow-500"></i>Energieniveau</h3>
+          <canvas id="chart-energy" height="200"></canvas>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-white rounded-2xl shadow p-5 fade-in">
+          <h3 class="font-bold text-sm text-gray-700 mb-3"><i class="fas fa-spider mr-1 text-portal-600"></i>Symptoomradar (laatste meting)</h3>
+          <canvas id="chart-radar" height="250"></canvas>
+        </div>
+        <div class="bg-white rounded-2xl shadow p-5 fade-in">
+          <h3 class="font-bold text-sm text-gray-700 mb-3"><i class="fas fa-chart-area mr-1 text-teal-600"></i>Symptoomtrend</h3>
+          <canvas id="chart-symptoms" height="250"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Geschiedenis tabel -->
+    <div id="history-container" class="bg-white rounded-2xl shadow-lg overflow-hidden fade-in mt-6">
+      <div class="p-5 border-b flex items-center justify-between">
+        <h3 class="font-bold text-gray-800"><i class="fas fa-history mr-2 text-portal-600"></i>Metingen overzicht</h3>
+        <span id="meting-count" class="text-xs bg-portal-100 text-portal-700 px-3 py-1 rounded-full font-semibold"></span>
+      </div>
+      <div id="history-table" class="p-4">
+        <p class="text-gray-400 text-center py-6"><i class="fas fa-spinner fa-spin mr-2"></i>Laden...</p>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    const portalCode = sessionStorage.getItem('portal_code');
+    const patientInfo = sessionStorage.getItem('portal_patient');
+    if (!portalCode || !patientInfo) { window.location.href = '/inloggen'; }
+
+    const SYMPTOMS = [
+      {key:'fatigue',    label:'Vermoeidheid',    icon:'fa-battery-half',  color:'#ef4444'},
+      {key:'sleep',      label:'Slaapkwaliteit',  icon:'fa-moon',          color:'#8b5cf6'},
+      {key:'digestion',  label:'Spijsvertering',  icon:'fa-stomach',       color:'#f59e0b'},
+      {key:'mood',       label:'Stemming',        icon:'fa-smile',         color:'#10b981'},
+      {key:'pain',       label:'Pijn/stijfheid',  icon:'fa-bolt',          color:'#ec4899'},
+      {key:'concentration',label:'Concentratie',  icon:'fa-brain',         color:'#3b82f6'},
+      {key:'hunger',     label:'Hongergevoelens', icon:'fa-utensils',      color:'#f97316'},
+    ];
+
+    // Zet datum standaard op vandaag
+    document.getElementById('meting-datum').value = new Date().toISOString().split('T')[0];
+
+    // Bouw symptoom-sliders
+    const sliderContainer = document.getElementById('symptom-sliders');
+    SYMPTOMS.forEach(s => {
+      sliderContainer.innerHTML += \`
+        <div class="bg-white rounded-lg border p-3">
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs font-semibold text-gray-700">
+              <i class="fas \${s.icon} mr-1" style="color:\${s.color}"></i>\${s.label}
+            </label>
+            <span id="val-\${s.key}" class="text-xs font-bold text-gray-500">–</span>
+          </div>
+          <input type="range" name="sym_\${s.key}" min="1" max="10" step="1" value=""
+            class="w-full accent-portal-600"
+            oninput="document.getElementById('val-\${s.key}').textContent=this.value"
+            onchange="document.getElementById('val-\${s.key}').textContent=this.value">
+        </div>\`;
+    });
+
+    function toggleForm() {
+      const el = document.getElementById('form-container');
+      el.classList.toggle('hidden');
+      document.getElementById('toggle-btn').innerHTML = el.classList.contains('hidden')
+        ? '<i class="fas fa-plus"></i> Nieuwe meting invoeren'
+        : '<i class="fas fa-times"></i> Sluiten';
+    }
+
+    async function submitMeting(e) {
+      e.preventDefault();
+      const form = e.target;
+      const fd = new FormData(form);
+      const payload = { portal_code: portalCode };
+
+      const date = fd.get('measurement_date');
+      if (date) payload.measurement_date = date;
+      const w = fd.get('weight_kg'); if (w) payload.weight_kg = parseFloat(w);
+      const t = fd.get('waist_cm');  if (t) payload.waist_cm  = parseFloat(t);
+      const en = fd.get('energy_level'); if (en) payload.energy_level = parseInt(en);
+      const notes = fd.get('notes'); if (notes) payload.notes = notes;
+
+      const symptoms = {};
+      SYMPTOMS.forEach(s => {
+        const v = fd.get('sym_' + s.key);
+        if (v) symptoms[s.key] = parseInt(v);
+      });
+      if (Object.keys(symptoms).length) payload.symptoms = symptoms;
+
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Opslaan...';
+
+      try {
+        const res = await fetch('/api/portal/progress', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) { alert('Fout: ' + (data.error || 'Onbekend')); return; }
+
+        form.reset();
+        document.getElementById('meting-datum').value = new Date().toISOString().split('T')[0];
+        SYMPTOMS.forEach(s => { document.getElementById('val-' + s.key).textContent = '–'; });
+        toggleForm();
+        await loadData();
+        showToast('Meting opgeslagen!');
+      } catch(err) {
+        alert('Fout: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-save"></i> Opslaan';
+      }
+    }
+
+    function showToast(msg) {
+      const t = document.createElement('div');
+      t.className = 'fixed bottom-6 right-6 bg-portal-600 text-white px-5 py-3 rounded-xl shadow-lg font-semibold text-sm z-50 fade-in';
+      t.innerHTML = '<i class="fas fa-check mr-2"></i>' + msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 3000);
+    }
+
+    let chartWeight, chartEnergy, chartRadar, chartSymptoms;
+
+    async function loadData() {
+      try {
+        const res = await fetch('/api/portal/progress?code=' + portalCode);
+        const data = await res.json();
+        if (!Array.isArray(data)) return;
+
+        document.getElementById('meting-count').textContent = data.length + ' meting' + (data.length !== 1 ? 'en' : '');
+
+        renderTable(data);
+        if (data.length > 0) {
+          document.getElementById('charts-container').classList.remove('hidden');
+          renderCharts(data);
+        }
+      } catch(err) {
+        document.getElementById('history-table').innerHTML = '<p class="text-red-500 text-center py-4">Fout bij laden: ' + err.message + '</p>';
+      }
+    }
+
+    function renderTable(data) {
+      if (!data.length) {
+        document.getElementById('history-table').innerHTML = '<p class="text-gray-400 text-center py-8"><i class="fas fa-chart-line mr-2"></i>Nog geen metingen. Voer uw eerste meting in!</p>';
+        return;
+      }
+      const sorted = [...data].sort((a,b) => new Date(b.measurement_date) - new Date(a.measurement_date));
+      let html = '<div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-xs text-gray-500 border-b">';
+      html += '<th class="pb-2 pr-3">Datum</th><th class="pb-2 pr-3">Gewicht</th><th class="pb-2 pr-3">Taille</th><th class="pb-2 pr-3">Energie</th><th class="pb-2">Notitie</th></tr></thead><tbody>';
+      sorted.forEach((m, i) => {
+        const prev = sorted[i + 1];
+        let wDiff = '';
+        if (m.weight_kg && prev?.weight_kg) {
+          const d = (m.weight_kg - prev.weight_kg).toFixed(1);
+          wDiff = d < 0
+            ? ' <span class="text-green-600 font-bold text-xs">(' + d + ' kg)</span>'
+            : d > 0 ? ' <span class="text-red-500 font-bold text-xs">(+' + d + ' kg)</span>' : '';
+        }
+        html += '<tr class="border-b last:border-0 hover:bg-gray-50">';
+        html += '<td class="py-2 pr-3 font-semibold text-gray-700">' + new Date(m.measurement_date + 'T12:00:00').toLocaleDateString('nl-NL') + '</td>';
+        html += '<td class="py-2 pr-3">' + (m.weight_kg ? m.weight_kg + ' kg' + wDiff : '–') + '</td>';
+        html += '<td class="py-2 pr-3">' + (m.waist_cm ? m.waist_cm + ' cm' : '–') + '</td>';
+        html += '<td class="py-2 pr-3">' + (m.energy_level ? '<span class="font-bold">' + m.energy_level + '/10</span>' : '–') + '</td>';
+        html += '<td class="py-2 text-gray-500 max-w-xs truncate">' + (m.notes || '') + '</td>';
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+      document.getElementById('history-table').innerHTML = html;
+    }
+
+    function renderCharts(data) {
+      const labels = data.map(m => new Date(m.measurement_date + 'T12:00:00').toLocaleDateString('nl-NL', {day:'numeric',month:'short'}));
+      const weights  = data.map(m => m.weight_kg || null);
+      const energies = data.map(m => m.energy_level || null);
+
+      // Gewicht
+      if (chartWeight) chartWeight.destroy();
+      const ctxW = document.getElementById('chart-weight').getContext('2d');
+      chartWeight = new Chart(ctxW, {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'Gewicht (kg)', data: weights, borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.1)', tension: 0.3, fill: true, pointRadius: 4 }] },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: false } } }
+      });
+
+      // Energie
+      if (chartEnergy) chartEnergy.destroy();
+      const ctxE = document.getElementById('chart-energy').getContext('2d');
+      chartEnergy = new Chart(ctxE, {
+        type: 'line',
+        data: { labels, datasets: [{ label: 'Energie (1-10)', data: energies, borderColor: '#eab308', backgroundColor: 'rgba(234,179,8,0.1)', tension: 0.3, fill: true, pointRadius: 4 }] },
+        options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { min: 0, max: 10 } } }
+      });
+
+      // Radar (laatste meting)
+      const last = data[data.length - 1];
+      if (last?.symptoms && Object.keys(last.symptoms).length) {
+        if (chartRadar) chartRadar.destroy();
+        const ctxR = document.getElementById('chart-radar').getContext('2d');
+        const symLabels = SYMPTOMS.map(s => s.label);
+        const symVals = SYMPTOMS.map(s => last.symptoms[s.key] || 0);
+        chartRadar = new Chart(ctxR, {
+          type: 'radar',
+          data: { labels: symLabels, datasets: [{ label: 'Symptomen', data: symVals, backgroundColor: 'rgba(22,163,74,0.15)', borderColor: '#16a34a', pointBackgroundColor: '#16a34a' }] },
+          options: { responsive: true, plugins: { legend: { display: false } }, scales: { r: { min: 0, max: 10, ticks: { stepSize: 2 } } } }
+        });
+      }
+
+      // Symptoom lijngrafieken
+      const hasSym = data.some(m => m.symptoms && Object.keys(m.symptoms).length > 0);
+      if (hasSym) {
+        if (chartSymptoms) chartSymptoms.destroy();
+        const ctxS = document.getElementById('chart-symptoms').getContext('2d');
+        const datasets = SYMPTOMS.map(s => ({
+          label: s.label,
+          data: data.map(m => m.symptoms?.[s.key] || null),
+          borderColor: s.color,
+          backgroundColor: 'transparent',
+          tension: 0.3,
+          pointRadius: 3
+        }));
+        chartSymptoms = new Chart(ctxS, {
+          type: 'line',
+          data: { labels, datasets },
+          options: { responsive: true, plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }, scales: { y: { min: 0, max: 10 } } }
+        });
+      }
+    }
+
+    loadData();
+  </script>
+</body></html>`)
 })
 
 export default app
