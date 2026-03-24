@@ -3337,6 +3337,197 @@ app.get('/admin/assessment/:patientId/:assessmentId', (c) => {
 </body></html>`)
 })
 
+// PROTOCOL PDF PAGE — server-side rendered, print-geoptimaliseerd
+app.get('/admin/protocol/:patientId/:protocolId/pdf', async (c) => {
+  const patientId = c.req.param('patientId')
+  const protocolId = c.req.param('protocolId')
+  const db = getSupabase(getEnv(c))
+
+  const [{ data: patient }, { data: protocols }] = await Promise.all([
+    db.from('patients').select('*').eq('id', patientId).single(),
+    db.from('supplement_protocols').select('*').eq('patient_id', patientId)
+  ])
+
+  const proto = protocols?.find((p: any) => p.id === protocolId)
+  if (!patient || !proto) return c.text('Protocol niet gevonden', 404)
+
+  const supps: any[] = proto.supplements || []
+  const nutr: any = proto.nutrition || {}
+  const life: any = proto.lifestyle || {}
+  const medAdv: any[] = proto.medication_advice || []
+  const warnings: string[] = Array.isArray(proto.warnings) ? proto.warnings : []
+  const date = new Date(proto.created_at).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' })
+  const patientName = `${patient.first_name} ${patient.last_name}`
+  const dob = patient.date_of_birth ? new Date(patient.date_of_birth).toLocaleDateString('nl-NL') : '-'
+
+  const suppRows = supps.map((s: any) => `
+    <tr>
+      <td><strong>${s.name}</strong></td>
+      <td>${s.dosage}</td>
+      <td>${s.timing}</td>
+      <td>${s.reason}</td>
+      <td>${s.duration}</td>
+    </tr>`).join('')
+
+  const avoidList = (nutr.avoid || []).map((a: string) => `<li>${a}</li>`).join('')
+  const recommendList = (nutr.recommend || []).map((r: string) => `<li>${r}</li>`).join('')
+  const exerciseList = (life.exercise || []).map((e: string) => `<li>${e}</li>`).join('')
+  const sleepList = (life.sleep || []).map((s: string) => `<li>${s}</li>`).join('')
+  const stressList = (life.stress || []).map((s: string) => `<li>${s}</li>`).join('')
+  const medRows = medAdv.map((m: any) => `
+    <div class="med-block">
+      <strong>${m.recommendation}</strong><br>
+      <span>Dosering: ${m.dosage}</span><br>
+      <span>Monitoring: ${m.monitoring}</span>
+    </div>`).join('')
+  const warningRows = warnings.map((w: string) => `
+    <div class="warning-block">⚠ ${w}</div>`).join('')
+
+  const html = `<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <title>Protocol — ${patientName}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 11px; color: #1a1a1a; background: white; }
+
+    .page { max-width: 210mm; margin: 0 auto; padding: 12mm 14mm; }
+
+    /* Header */
+    .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #7c3aed; padding-bottom: 10px; margin-bottom: 14px; }
+    .practice-name { font-size: 18px; font-weight: 800; color: #7c3aed; }
+    .practice-sub { font-size: 10px; color: #6b7280; margin-top: 2px; }
+    .header-right { text-align: right; font-size: 10px; color: #6b7280; }
+    .header-right .patient-name { font-size: 14px; font-weight: 700; color: #1a1a1a; }
+
+    /* Sections */
+    h2 { font-size: 12px; font-weight: 700; color: #7c3aed; margin: 14px 0 6px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+
+    /* Supplements table */
+    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+    th { background: #f3f4f6; text-align: left; padding: 5px 7px; font-size: 10px; font-weight: 700; color: #374151; border: 1px solid #e5e7eb; }
+    td { padding: 5px 7px; border: 1px solid #e5e7eb; vertical-align: top; }
+    tr:nth-child(even) td { background: #fafafa; }
+
+    /* Macros grid */
+    .macro-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
+    .macro-box { border: 1px solid #d1fae5; background: #f0fdf4; border-radius: 4px; padding: 6px 8px; }
+    .macro-label { font-size: 9px; color: #6b7280; }
+    .macro-value { font-size: 11px; font-weight: 700; color: #065f46; margin-top: 2px; }
+
+    /* Lists */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
+    .list-block { }
+    .list-block h3 { font-size: 10px; font-weight: 700; margin-bottom: 4px; color: #374151; }
+    ul { padding-left: 14px; }
+    li { margin-bottom: 2px; }
+
+    /* Lifestyle */
+    .lifestyle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+    .lifestyle-col h3 { font-size: 10px; font-weight: 700; color: #374151; margin-bottom: 4px; }
+
+    /* Medication */
+    .med-block { background: #fefce8; border-left: 3px solid #ca8a04; padding: 7px 10px; margin-bottom: 6px; border-radius: 2px; }
+    .med-block span { color: #713f12; }
+
+    /* Warning */
+    .warning-block { background: #fff7ed; border-left: 3px solid #ea580c; padding: 7px 10px; margin-bottom: 6px; border-radius: 2px; font-size: 10px; color: #9a3412; }
+
+    /* Footer */
+    .footer { margin-top: 16px; border-top: 1px solid #e5e7eb; padding-top: 8px; font-size: 9px; color: #9ca3af; display: flex; justify-content: space-between; }
+
+    /* Print */
+    @media print {
+      body { font-size: 10px; }
+      .page { padding: 8mm 10mm; }
+      .no-print { display: none !important; }
+      h2 { page-break-after: avoid; }
+      table { page-break-inside: auto; }
+      tr { page-break-inside: avoid; }
+    }
+
+    /* Print button — alleen op scherm */
+    .print-bar { background: #7c3aed; color: white; padding: 10px 16px; text-align: center; position: sticky; top: 0; z-index: 10; display: flex; gap: 12px; justify-content: center; align-items: center; }
+    .print-bar button { background: white; color: #7c3aed; border: none; padding: 6px 18px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 13px; }
+    .print-bar a { color: white; font-size: 12px; text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="print-bar no-print">
+    <span>Protocol klaar om op te slaan</span>
+    <button onclick="window.print()">&#128438; Opslaan als PDF / Printen</button>
+    <a href="/admin/protocol/${patientId}/${protocolId}">Terug</a>
+  </div>
+
+  <div class="page">
+    <!-- Header -->
+    <div class="header">
+      <div>
+        <div class="practice-name">Grip op Gewicht</div>
+        <div class="practice-sub">Orthomoleculaire Praktijk</div>
+      </div>
+      <div class="header-right">
+        <div class="patient-name">${patientName}</div>
+        <div>Geboortedatum: ${dob}</div>
+        <div>Aangemaakt: ${date}</div>
+        <div>Type: ${proto.protocol_type}</div>
+      </div>
+    </div>
+
+    ${warningRows ? `<h2>Aandachtspunten</h2>${warningRows}` : ''}
+
+    <!-- Supplementen -->
+    <h2>1. Supplementen Protocol</h2>
+    <table>
+      <thead><tr><th>Supplement</th><th>Dosering</th><th>Timing</th><th>Reden</th><th>Duur</th></tr></thead>
+      <tbody>${suppRows}</tbody>
+    </table>
+
+    <!-- Voeding -->
+    <h2>2. Voedingsrichtlijnen</h2>
+    <div class="macro-grid">
+      <div class="macro-box"><div class="macro-label">Koolhydraten</div><div class="macro-value">${nutr.carbs || '-'}</div></div>
+      <div class="macro-box"><div class="macro-label">Eiwitten</div><div class="macro-value">${nutr.protein || '-'}</div></div>
+      <div class="macro-box"><div class="macro-label">Vetten</div><div class="macro-value">${nutr.fats || '-'}</div></div>
+      <div class="macro-box"><div class="macro-label">Vezels</div><div class="macro-value">${nutr.fiber || '-'}</div></div>
+    </div>
+    <div class="two-col">
+      ${avoidList ? `<div class="list-block"><h3>❌ Te vermijden</h3><ul>${avoidList}</ul></div>` : ''}
+      ${recommendList ? `<div class="list-block"><h3>✓ Aanbevolen</h3><ul>${recommendList}</ul></div>` : ''}
+    </div>
+
+    <!-- Leefstijl -->
+    <h2>3. Leefstijl</h2>
+    <div class="lifestyle-grid">
+      ${exerciseList ? `<div class="lifestyle-col"><h3>Beweging</h3><ul>${exerciseList}</ul></div>` : ''}
+      ${sleepList ? `<div class="lifestyle-col"><h3>Slaap</h3><ul>${sleepList}</ul></div>` : ''}
+      ${stressList ? `<div class="lifestyle-col"><h3>Stress</h3><ul>${stressList}</ul></div>` : ''}
+    </div>
+
+    ${medRows ? `<h2>4. Medicatie Aanbeveling (voor huisarts)</h2>${medRows}` : ''}
+
+    <!-- Footer -->
+    <div class="footer">
+      <span>Grip op Gewicht — Orthomoleculaire Praktijk</span>
+      <span>Dit protocol is persoonlijk en vertrouwelijk</span>
+      <span>${date}</span>
+    </div>
+  </div>
+
+  <script>
+    // Auto-open print dialog na laden
+    window.addEventListener('load', () => {
+      // Kleine vertraging zodat de pagina volledig geladen is
+      setTimeout(() => window.print(), 400)
+    })
+  </script>
+</body>
+</html>`
+
+  return c.html(html)
+})
+
 // PROTOCOL DETAIL PAGE
 app.get('/admin/protocol/:patientId/:protocolId', (c) => {
   const patientId = c.req.param('patientId')
@@ -3410,7 +3601,7 @@ app.get('/admin/protocol/:patientId/:protocolId', (c) => {
         }
 
         // Action buttons
-        html += '<div class="flex gap-3 mt-6 border-t pt-6"><button onclick="window.print()" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700"><i class="fas fa-print mr-2"></i>Print Protocol</button><a href="/admin/patient/'+patientId+'" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-arrow-left mr-2"></i>Terug naar patiënt</a></div>';
+        html += '<div class="flex gap-3 mt-6 border-t pt-6"><a href="/admin/protocol/'+patientId+'/'+protocolId+'/pdf" target="_blank" class="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center"><i class="fas fa-file-pdf mr-2"></i>Opslaan als PDF</a><a href="/admin/patient/'+patientId+'" class="border border-gray-300 px-6 py-3 rounded-lg font-medium hover:bg-gray-50"><i class="fas fa-arrow-left mr-2"></i>Terug naar patiënt</a></div>';
 
         html += '</div></div>';
         document.getElementById('protocol-container').innerHTML = html;
