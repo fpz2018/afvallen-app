@@ -15,6 +15,7 @@ type EnvVars = {
   SUPABASE_SERVICE_ROLE_KEY: string // voor database operaties via getSupabase()
   STRIPE_SECRET_KEY: string
   STRIPE_PUBLISHABLE_KEY: string
+  COUPON_CODE: string              // kortingscode voor gratis toegang (stel in als Netlify env var)
 }
 
 // Helper: haal env variabelen op (werkt op Netlify, Cloudflare, en lokaal)
@@ -27,6 +28,7 @@ function getEnv(c: any): EnvVars {
     SUPABASE_SERVICE_ROLE_KEY: honoEnv.SUPABASE_SERVICE_ROLE_KEY || processEnv.SUPABASE_SERVICE_ROLE_KEY || '',
     STRIPE_SECRET_KEY: honoEnv.STRIPE_SECRET_KEY || processEnv.STRIPE_SECRET_KEY || '',
     STRIPE_PUBLISHABLE_KEY: honoEnv.STRIPE_PUBLISHABLE_KEY || processEnv.STRIPE_PUBLISHABLE_KEY || '',
+    COUPON_CODE: honoEnv.COUPON_CODE || processEnv.COUPON_CODE || '',
   }
 }
 
@@ -4501,6 +4503,53 @@ app.get('/api/payments/status/:patientId', async (c) => {
   })
 })
 
+// Kortingscode — registreer gratis betaling zonder Stripe
+app.post('/api/payments/apply-coupon', async (c) => {
+  const { COUPON_CODE } = getEnv(c)
+  const db = getSupabase(getEnv(c))
+  const body = await c.req.json()
+  const { patient_id, payment_type, coupon_code } = body
+
+  if (!patient_id || !payment_type || !coupon_code) {
+    return c.json({ error: 'Ontbrekende velden' }, 400)
+  }
+  if (!['analysis', 'protocol'].includes(payment_type)) {
+    return c.json({ error: 'Ongeldig type' }, 400)
+  }
+
+  const validCode = COUPON_CODE?.trim().toUpperCase()
+  if (!validCode || coupon_code.trim().toUpperCase() !== validCode) {
+    return c.json({ error: 'Ongeldige kortingscode' }, 400)
+  }
+
+  // Check of dit type al betaald is
+  const { data: existing } = await db
+    .from('payments')
+    .select('id')
+    .eq('patient_id', patient_id)
+    .eq('payment_type', payment_type)
+    .eq('status', 'paid')
+    .limit(1)
+
+  if (existing && existing.length > 0) {
+    // Al betaald — gewoon doorgaan
+    return c.json({ success: true, already_paid: true })
+  }
+
+  const { error } = await db.from('payments').insert([{
+    patient_id,
+    payment_type,
+    amount: 0,
+    currency: 'eur',
+    status: 'paid',
+    stripe_session_id: 'coupon_' + coupon_code.toUpperCase() + '_' + Date.now(),
+    paid_at: new Date().toISOString(),
+  }])
+
+  if (error) return c.json({ error: error.message }, 500)
+  return c.json({ success: true })
+})
+
 // Get Stripe publishable key (voor frontend)
 app.get('/api/payments/config', (c) => {
   const { STRIPE_PUBLISHABLE_KEY } = getEnv(c)
@@ -6025,6 +6074,20 @@ app.get('/betalen/analyse', (c) => {
         <p class="text-xs text-center text-gray-400 mt-4">
           <i class="fas fa-lock mr-1"></i>Beveiligde betaling via Stripe. Je gegevens zijn veilig.
         </p>
+
+        <!-- Kortingscode -->
+        <div class="mt-4 border-t pt-4">
+          <button type="button" onclick="toggleCoupon()" class="text-xs text-gray-400 hover:text-gray-600 underline w-full text-center">
+            <i class="fas fa-tag mr-1"></i>Kortingscode invoeren
+          </button>
+          <div id="coupon-box" class="hidden mt-3 flex gap-2">
+            <input id="coupon-input" type="text" placeholder="Voer code in" class="flex-1 border rounded-lg px-3 py-2 text-sm uppercase tracking-widest">
+            <button onclick="applyCoupon('analysis')" class="bg-gray-700 hover:bg-gray-900 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">
+              Toepassen
+            </button>
+          </div>
+          <p id="coupon-error" class="hidden text-xs text-red-500 mt-2 text-center"></p>
+        </div>
       </div>
     </div>
 
@@ -6037,6 +6100,39 @@ app.get('/betalen/analyse', (c) => {
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
     if (!portalCode || !patientInfo.id) { window.location.href = '/inloggen'; }
+
+    function toggleCoupon() {
+      document.getElementById('coupon-box').classList.toggle('hidden');
+    }
+
+    async function applyCoupon(type) {
+      const code = document.getElementById('coupon-input').value.trim();
+      if (!code) return;
+      const errEl = document.getElementById('coupon-error');
+      errEl.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/payments/apply-coupon', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ patient_id: patientInfo.id, payment_type: type, coupon_code: code })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errEl.textContent = data.error || 'Ongeldige code';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        // Update sessionStorage en redirect naar succes
+        if (type === 'analysis') patientInfo.analysis_paid = true;
+        if (type === 'protocol') patientInfo.protocol_paid = true;
+        sessionStorage.setItem('portal_patient', JSON.stringify(patientInfo));
+        window.location.href = '/betaling-succes?coupon=1&type=' + type;
+      } catch(err) {
+        errEl.textContent = 'Verbindingsfout. Probeer opnieuw.';
+        errEl.classList.remove('hidden');
+      }
+    }
 
     async function startPayment() {
       const btn = document.getElementById('pay-btn');
@@ -6177,6 +6273,20 @@ app.get('/betalen/protocol', (c) => {
         <p class="text-xs text-center text-gray-400 mt-4">
           <i class="fas fa-lock mr-1"></i>Beveiligde betaling via Stripe. Je gegevens zijn veilig.
         </p>
+
+        <!-- Kortingscode -->
+        <div class="mt-4 border-t pt-4">
+          <button type="button" onclick="toggleCoupon()" class="text-xs text-gray-400 hover:text-gray-600 underline w-full text-center">
+            <i class="fas fa-tag mr-1"></i>Kortingscode invoeren
+          </button>
+          <div id="coupon-box" class="hidden mt-3 flex gap-2">
+            <input id="coupon-input" type="text" placeholder="Voer code in" class="flex-1 border rounded-lg px-3 py-2 text-sm uppercase tracking-widest">
+            <button onclick="applyCoupon('protocol')" class="bg-gray-700 hover:bg-gray-900 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">
+              Toepassen
+            </button>
+          </div>
+          <p id="coupon-error" class="hidden text-xs text-red-500 mt-2 text-center"></p>
+        </div>
       </div>
     </div>
 
@@ -6189,6 +6299,38 @@ app.get('/betalen/protocol', (c) => {
     const portalCode = sessionStorage.getItem('portal_code');
     const patientInfo = JSON.parse(sessionStorage.getItem('portal_patient') || '{}');
     if (!portalCode || !patientInfo.id) { window.location.href = '/inloggen'; }
+
+    function toggleCoupon() {
+      document.getElementById('coupon-box').classList.toggle('hidden');
+    }
+
+    async function applyCoupon(type) {
+      const code = document.getElementById('coupon-input').value.trim();
+      if (!code) return;
+      const errEl = document.getElementById('coupon-error');
+      errEl.classList.add('hidden');
+
+      try {
+        const res = await fetch('/api/payments/apply-coupon', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ patient_id: patientInfo.id, payment_type: type, coupon_code: code })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errEl.textContent = data.error || 'Ongeldige code';
+          errEl.classList.remove('hidden');
+          return;
+        }
+        if (type === 'analysis') patientInfo.analysis_paid = true;
+        if (type === 'protocol') patientInfo.protocol_paid = true;
+        sessionStorage.setItem('portal_patient', JSON.stringify(patientInfo));
+        window.location.href = '/betaling-succes?coupon=1&type=' + type;
+      } catch(err) {
+        errEl.textContent = 'Verbindingsfout. Probeer opnieuw.';
+        errEl.classList.remove('hidden');
+      }
+    }
 
     function updateSlider(val) {
       const euros = Math.floor(val / 100);
@@ -6324,7 +6466,22 @@ app.get('/betaling-succes', (c) => {
     (async function() {
       const params = new URLSearchParams(window.location.search);
       const sessionId = params.get('session_id');
+      const coupon = params.get('coupon');
       const type = params.get('type');
+
+      // Kortingscode-flow: geen Stripe verificatie nodig
+      if (coupon === '1') {
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('success').classList.remove('hidden');
+        if (type === 'analysis') {
+          document.getElementById('success-message').textContent = 'Kortingscode toegepast! Je analyse is nu gratis ontgrendeld.';
+          document.getElementById('analysis-next').classList.remove('hidden');
+        } else if (type === 'protocol') {
+          document.getElementById('success-message').textContent = 'Kortingscode toegepast! Je protocol is nu gratis ontgrendeld.';
+          document.getElementById('protocol-next').classList.remove('hidden');
+        }
+        return;
+      }
 
       if (!sessionId) {
         document.getElementById('loading').classList.add('hidden');
