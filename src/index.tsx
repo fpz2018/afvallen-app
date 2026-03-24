@@ -2418,8 +2418,9 @@ app.get('/admin/patient/:id', (c) => {
           fetch('/api/follow-ups/'+patientId).catch(()=>({ok:false}))
         ]);
         patientData = await patientRes.json();
-        progressData = await progressRes.json();
-        try { followUpsData = followUpsRes.ok ? await followUpsRes.json() : []; } catch(e) { followUpsData = []; }
+        const progressJson = await progressRes.json();
+        progressData = Array.isArray(progressJson) ? progressJson : [];
+        try { const fuJson = followUpsRes.ok ? await followUpsRes.json() : []; followUpsData = Array.isArray(fuJson) ? fuJson : []; } catch(e) { followUpsData = []; }
 
         const p = patientData;
         const age = p.date_of_birth ? Math.floor((Date.now()-new Date(p.date_of_birth).getTime())/31557600000) : '-';
